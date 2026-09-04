@@ -1,0 +1,32 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+*.profraw
+*.xcresult
+*.log
+UsageButler.xcodeproj/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+xcuserdata/
+.xcode.env.local
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p8
+*.p12
+*.mobileprovision
+Secrets.xcconfig
+Private.xcconfig
+
+# Local databases and exports
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
