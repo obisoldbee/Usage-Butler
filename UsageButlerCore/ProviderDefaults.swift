@@ -28,4 +28,23 @@ public enum ProviderPreferenceKey {
         case .ark: arkRefreshOverrideSeconds
         }
     }
+
+    public static func productEnabledKey(for providerID: ProviderID, sourceProductID: String) -> String {
+        "usageButler.settings.v1.providers.\(providerID.rawValue).products.\(sourceProductID).enabled"
+    }
+
+    public static let arkAgentPlanEnabled = productEnabledKey(for: .ark, sourceProductID: "agent-plan")
+    public static let arkCodingPlanEnabled = productEnabledKey(for: .ark, sourceProductID: "coding-plan")
+
+    public static func isProductEnabled(
+        providerID: ProviderID,
+        sourceProductID: String,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        let key = productEnabledKey(for: providerID, sourceProductID: sourceProductID)
+        if defaults.object(forKey: key) == nil {
+            return true
+        }
+        return defaults.bool(forKey: key)
+    }
 }

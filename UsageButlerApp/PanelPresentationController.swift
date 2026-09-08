@@ -1,7 +1,9 @@
 import AppKit
 import Carbon.HIToolbox
+import Combine
 import SwiftUI
 import UsageButlerCore
+import UsageButlerDomain
 import UsageButlerUI
 
 /// Owns the menu-bar presence: the status item, the popover panel, the
@@ -15,6 +17,12 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
     private var hotKeyRef: EventHotKeyRef?
     private var carbonEventHandler: EventHandlerRef?
     private var keyDownMonitor: Any?
+    private var memoryObservation: AnyCancellable?
+    private var appearanceObservation: NSKeyValueObservation?
+    private var memoryExpiryTask: Task<Void, Never>?
+    private var displayedPressure: MemoryPressureState = .unknown
+    private var renderedPressure: MemoryPressureState?
+    private var renderedDark: Bool?
 
     private static let hotKeySignature = OSType(0x5542_686B) // "UBhk"
     private static let hotKeyID: UInt32 = 1
@@ -32,12 +40,10 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
         )
         super.init()
 
-        let icon = NSImage(named: "MenuBarIcon")
-        icon?.isTemplate = true
-        statusItem.button?.image = icon
         statusItem.button?.imageScaling = .scaleProportionallyUpOrDown
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
+        observeMemoryStatus()
 
         popover.behavior = .transient
         popover.contentSize = NSSize(width: 540, height: 760)
@@ -53,6 +59,53 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
         keyDownMonitor = monitor
 
         registerStoredShortcut()
+    }
+
+    // Reuse the runtime stream: no new memory reader or polling loop.
+    private func observeMemoryStatus() {
+        memoryObservation = runtime.menuModel.$snapshot
+            .map(\.memory)
+            .removeDuplicates { lhs, rhs in
+                lhs.capturedAt == rhs.capturedAt && lhs.pressure == rhs.pressure
+            }
+            .sink { [weak self] snapshot in
+                self?.receiveMemory(snapshot)
+            }
+        appearanceObservation = statusItem.button?.observe(
+            \.effectiveAppearance, options: [.new]
+        ) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.renderMemoryStatus() }
+        }
+    }
+
+    private func receiveMemory(_ snapshot: Stage3MemoryProjection) {
+        memoryExpiryTask?.cancel()
+        let now = Date()
+        displayedPressure = MemoryStatusIcon.pressure(for: snapshot, now: now)
+        renderMemoryStatus()
+        guard displayedPressure != .unknown else { return }
+        let remaining = snapshot.capturedAt.addingTimeInterval(
+            MemoryStatusIcon.maximumAge
+        ).timeIntervalSince(now)
+        memoryExpiryTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(remaining)) }
+            catch { return }
+            guard !Task.isCancelled else { return }
+            self?.displayedPressure = .unknown
+            self?.renderMemoryStatus()
+        }
+    }
+
+    private func renderMemoryStatus() {
+        guard let button = statusItem.button else { return }
+        let dark = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        guard renderedPressure != displayedPressure || renderedDark != dark else { return }
+        renderedPressure = displayedPressure
+        renderedDark = dark
+        button.image = MemoryStatusIcon.image(for: displayedPressure, dark: dark)
+        let label = MemoryStatusIcon.label(for: displayedPressure)
+        button.toolTip = label
+        button.setAccessibilityLabel("额度管家，\(label)")
     }
 
     // MARK: - Panel

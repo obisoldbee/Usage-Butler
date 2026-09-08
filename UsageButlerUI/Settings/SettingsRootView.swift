@@ -10,6 +10,8 @@ public struct SettingsRootView: View {
     private var globalRefreshSeconds = 300
     @AppStorage(ProviderPreferenceKey.quotaAlertsEnabled)
     private var quotaAlertsEnabled = true
+    @AppStorage(ProviderPreferenceKey.larkQuotaAlertChatID)
+    private var larkChatID = ""
     @State private var feedback: String?
     @State private var showingDiagnostics = false
 
@@ -155,6 +157,22 @@ public struct SettingsRootView: View {
 
             Divider()
 
+            SettingsRow(
+                title: String(localized: "飞书会话 ID"),
+                subtitle: String(localized: "接收额度提醒推送的飞书会话 ID（以 oc_ 开头）")
+            ) {
+                TextField("oc_...", text: $larkChatID)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 280)
+                    .onChange(of: larkChatID) { _ in
+                        Task { @MainActor in
+                            await model.loadLarkQuotaAlertChannelStatus()
+                        }
+                    }
+            }
+
+            Divider()
+
             SettingsRow(title: String(localized: "查看脱敏诊断…")) {
                 Button("查看脱敏诊断…") {
                     showingDiagnostics = true
@@ -191,6 +209,9 @@ public struct SettingsRootView: View {
         case .ready:
             Label("已就绪", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
+        case .needsChatID:
+            Label("未配会话", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
         case .needsSetup:
             Label("需要配置", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
@@ -203,18 +224,22 @@ public struct SettingsRootView: View {
     private var larkQuotaAlertStatusDetail: String {
         switch model.larkQuotaAlertChannelStatus {
         case .notChecked, .checking:
-            return String(localized: "只读检查 lark-cli 的飞书 Bot 状态，不会登录或发消息")
+            return String(localized: "检测本地 lark-cli 状态与接收会话配置")
         case .ready:
             return quotaAlertsEnabled
                 ? String(localized: "飞书 Bot 已就绪；额度提醒会同时尝试系统通知与飞书推送")
                 : String(localized: "飞书 Bot 已就绪；额度提醒当前已关闭")
+        case .needsChatID:
+            return quotaAlertsEnabled
+                ? String(localized: "飞书 Bot 已就绪，但未配置接收会话 ID（请填写下方飞书会话 ID）")
+                : String(localized: "飞书 Bot 已就绪；额度提醒当前已关闭")
         case .needsSetup:
             return quotaAlertsEnabled
-                ? String(localized: "飞书 Bot 未就绪；请检查 lark-cli 配置，当前仍会尝试发送系统通知")
+                ? String(localized: "飞书 Bot 未就绪：请在终端检查 lark-cli 登录与 Bot 授权")
                 : String(localized: "飞书 Bot 未就绪；额度提醒当前已关闭")
         case .unavailable:
             return quotaAlertsEnabled
-                ? String(localized: "未能使用 lark-cli；请检查安装与飞书 Bot 配置")
+                ? String(localized: "未能使用 lark-cli；请检查是否已安装 lark-cli 并加入 PATH")
                 : String(localized: "未能使用 lark-cli；额度提醒当前已关闭")
         }
     }
@@ -252,6 +277,13 @@ public struct SettingsRootView: View {
                     },
                     onSelectExecutable: {
                         await model.selectProviderExecutable(provider.id)
+                    },
+                    onSetProductEnabled: { productID, enabled in
+                        model.setProductEnabled(
+                            provider.id,
+                            productID: productID,
+                            enabled: enabled
+                        )
                     },
                     reportAction: { message in
                         feedback = message
@@ -435,10 +467,15 @@ private struct ProviderSettingsRow: View {
     let onRedetect: () -> Void
     let onLogin: (ProviderLoginRequest) async -> ProviderLoginFeedback
     let onSelectExecutable: () async -> ProviderExecutableSelectionFeedback
+    let onSetProductEnabled: ((String, Bool) -> Void)?
     let reportAction: (String) -> Void
 
     @AppStorage private var isEnabled: Bool
     @AppStorage private var refreshOverrideSeconds: Int
+    @AppStorage(ProviderPreferenceKey.arkAgentPlanEnabled)
+    private var arkAgentPlanEnabled = true
+    @AppStorage(ProviderPreferenceKey.arkCodingPlanEnabled)
+    private var arkCodingPlanEnabled = true
     @State private var isLoginInFlight = false
     @State private var isLoginCancellationInFlight = false
     @State private var isExecutableSelectionInFlight = false
@@ -452,6 +489,7 @@ private struct ProviderSettingsRow: View {
             ProviderLoginRequest
         ) async -> ProviderLoginFeedback,
         onSelectExecutable: @escaping () async -> ProviderExecutableSelectionFeedback,
+        onSetProductEnabled: ((String, Bool) -> Void)? = nil,
         reportAction: @escaping (String) -> Void
     ) {
         self.provider = provider
@@ -460,6 +498,7 @@ private struct ProviderSettingsRow: View {
         self.onRedetect = onRedetect
         self.onLogin = onLogin
         self.onSelectExecutable = onSelectExecutable
+        self.onSetProductEnabled = onSetProductEnabled
         self.reportAction = reportAction
         self._isEnabled = AppStorage(wrappedValue: true, provider.preferenceKey)
         self._refreshOverrideSeconds = AppStorage(wrappedValue: -1, provider.refreshOverrideKey)
@@ -513,6 +552,28 @@ private struct ProviderSettingsRow: View {
 
                     actionControls
                 }
+
+                if isEnabled && provider.id == .ark {
+                    HStack(spacing: 12) {
+                        Text("展示套餐")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Agent Plan", isOn: $arkAgentPlanEnabled)
+                            .toggleStyle(.checkbox)
+                            .font(.caption)
+                            .onChange(of: arkAgentPlanEnabled) { newValue in
+                                onSetProductEnabled?("agent-plan", newValue)
+                            }
+
+                        Toggle("Coding Plan", isOn: $arkCodingPlanEnabled)
+                            .toggleStyle(.checkbox)
+                            .font(.caption)
+                            .onChange(of: arkCodingPlanEnabled) { newValue in
+                                onSetProductEnabled?("coding-plan", newValue)
+                            }
+                    }
+                }
             }
 
             Spacer(minLength: 8)
@@ -529,11 +590,19 @@ private struct ProviderSettingsRow: View {
         .frame(minHeight: 104)
     }
 
+    @ViewBuilder
     private var providerIcon: some View {
-        Image(systemName: ProviderPresentation.symbolName(for: provider.id))
-            .font(.title2)
-            .foregroundStyle(ProviderPresentation.accentColor(for: provider.id))
-            .accessibilityLabel(ProviderPresentation.displayName(for: provider.id))
+        if let assetName = ProviderPresentation.imageAssetName(for: provider.id) {
+            Image(assetName)
+                .resizable()
+                .scaledToFit()
+                .accessibilityLabel(ProviderPresentation.displayName(for: provider.id))
+        } else {
+            Image(systemName: ProviderPresentation.symbolName(for: provider.id))
+                .font(.title2)
+                .foregroundStyle(ProviderPresentation.accentColor(for: provider.id))
+                .accessibilityLabel(ProviderPresentation.displayName(for: provider.id))
+        }
     }
 
     @ViewBuilder

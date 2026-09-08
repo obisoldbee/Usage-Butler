@@ -9,22 +9,25 @@ public enum LiveProviderProjectionMapper {
     /// overview. Their retained state remains owned by `ProviderController`.
     public static func map(
         _ projection: ProviderProjection,
-        now: Date
+        now: Date,
+        isProductEnabled: ((ProviderID, String) -> Bool)? = nil
     ) -> Stage3ProviderProjection? {
         guard projection.isEnabled else { return nil }
         return map(
             projection.state,
             phase: projection.phase,
-            now: now
+            now: now,
+            isProductEnabled: isProductEnabled
         )
     }
 
     public static func map(
         _ projections: [ProviderProjection],
-        now: Date
+        now: Date,
+        isProductEnabled: ((ProviderID, String) -> Bool)? = nil
     ) -> [Stage3ProviderProjection] {
         projections
-            .compactMap { map($0, now: now) }
+            .compactMap { map($0, now: now, isProductEnabled: isProductEnabled) }
             .sorted { $0.id.canonicalOrder < $1.id.canonicalOrder }
     }
 
@@ -32,19 +35,26 @@ public enum LiveProviderProjectionMapper {
     /// applied Provider visibility policy.
     public static func map(
         _ state: ProviderState,
-        now: Date
+        now: Date,
+        isProductEnabled: ((ProviderID, String) -> Bool)? = nil
     ) -> Stage3ProviderProjection {
-        map(state, phase: nil, now: now)
+        map(state, phase: nil, now: now, isProductEnabled: isProductEnabled)
     }
 
     private static func map(
         _ state: ProviderState,
         phase: ProviderControllerPhase?,
-        now: Date
+        now: Date,
+        isProductEnabled: ((ProviderID, String) -> Bool)? = nil
     ) -> Stage3ProviderProjection {
         let quota = state.lastGood
-        let visibleProducts = quota?.products.filter {
-            !isAuthoritativelyAbsent($0.state.presence)
+        let visibleProducts = quota?.products.filter { product in
+            if let isProductEnabled {
+                guard isProductEnabled(state.id, product.sourceProductID) else { return false }
+            } else {
+                guard !isAuthoritativelyAbsent(product.state.presence) else { return false }
+            }
+            return true
         } ?? []
 
         let content = projectContent(
@@ -313,6 +323,7 @@ public enum LiveProviderProjectionMapper {
     ) -> Stage3QuotaProductProjection {
         Stage3QuotaProductProjection(
             id: stableProductID(product.id),
+            sourceProductID: product.sourceProductID,
             title: arkProductTitle(product),
             planLevel: planBadge(product.planLevel),
             metrics: product.metrics.compactMap {
@@ -386,14 +397,15 @@ public enum LiveProviderProjectionMapper {
             return nil
         }
 
-        let selectedDetail = summary.details?
+        let availableDetails = summary.details?
             .filter {
                 $0.status.trimmingCharacters(in: .whitespacesAndNewlines)
                     .caseInsensitiveCompare("available") == .orderedSame
                     && $0.expiresAt != nil
             }
             .sorted(by: resetDetailComesBefore)
-            .first
+
+        let selectedDetail = availableDetails?.first
 
         return Stage3QuotaMetricProjection(
             id: stableMetricID(MetricID(sourceIdentity: summary.provenance.sourceIdentity)),
@@ -407,7 +419,17 @@ public enum LiveProviderProjectionMapper {
                     style: .absoluteDateTime
                 )
             },
-            dataState: metricDataState(for: summary.state.freshness)
+            dataState: metricDataState(for: summary.state.freshness),
+            resetEntitlements: availableDetails.map {
+                $0.compactMap { detail in
+                    guard let expiresAt = detail.expiresAt else { return nil }
+                    return Stage3ResetEntitlementItem(
+                        id: detail.sourceID,
+                        title: detail.title,
+                        expiresAt: expiresAt
+                    )
+                }
+            }
         )
     }
 

@@ -27,6 +27,15 @@ public enum ProviderPresentation {
         }
     }
 
+    /// Asset catalog image name for the provider's brand logo.
+    public static func imageAssetName(for provider: ProviderID) -> String? {
+        switch provider {
+        case .openAI: "ProviderOpenAILogo"
+        case .miniMax: "ProviderMiniMaxLogo"
+        case .ark: "ProviderArkLogo"
+        }
+    }
+
     public static func accentColor(for provider: ProviderID) -> Color {
         switch provider {
         case .openAI: .primary

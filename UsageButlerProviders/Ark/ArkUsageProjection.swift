@@ -468,6 +468,9 @@ public enum ArkDomainMapper {
         snapshot: ParsedArkUsageSnapshot
     ) -> ProviderFailure? {
         guard let item else {
+            if case .notEntitled = resolution.presence {
+                return nil
+            }
             return schemaFailure("missing_or_duplicate_product")
         }
         if item.sourceErrorPresent {

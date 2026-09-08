@@ -164,6 +164,7 @@ public enum Stage3FixtureCatalog {
         [
             Stage3QuotaProductProjection(
                 id: "ark-agent",
+                sourceProductID: "agent-plan",
                 title: "Agent Plan",
                 planLevel: Stage3PlanBadge(value: "Medium", origin: .reported(sourceField: "tier")),
                 metrics: [
@@ -174,6 +175,7 @@ public enum Stage3FixtureCatalog {
             ),
             Stage3QuotaProductProjection(
                 id: "ark-coding",
+                sourceProductID: "coding-plan",
                 title: "Coding Plan",
                 planLevel: Stage3PlanBadge(value: "Pro", origin: .reported(sourceField: "plans.get.tier")),
                 metrics: [

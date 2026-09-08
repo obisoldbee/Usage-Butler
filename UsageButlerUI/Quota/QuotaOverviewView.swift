@@ -84,11 +84,19 @@ private struct ProviderQuotaCard: View {
         ProviderPresentation.accentColor(for: provider.id)
     }
 
+    @ViewBuilder
     private var providerIcon: some View {
-        Image(systemName: ProviderPresentation.symbolName(for: provider.id))
-            .font(.title2)
-            .foregroundStyle(accent)
-            .accessibilityLabel(ProviderPresentation.displayName(for: provider.id))
+        if let assetName = ProviderPresentation.imageAssetName(for: provider.id) {
+            Image(assetName)
+                .resizable()
+                .scaledToFit()
+                .accessibilityLabel(ProviderPresentation.displayName(for: provider.id))
+        } else {
+            Image(systemName: ProviderPresentation.symbolName(for: provider.id))
+                .font(.title2)
+                .foregroundStyle(accent)
+                .accessibilityLabel(ProviderPresentation.displayName(for: provider.id))
+        }
     }
 
     var body: some View {
@@ -557,6 +565,14 @@ private struct ProductQuotaSection: View {
                         .font(.subheadline.weight(.semibold))
                     if let planLevel = product.planLevel {
                         PlanBadge(badge: planLevel)
+                    } else if product.metrics.isEmpty {
+                        Text("已到期")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.15))
+                            .foregroundStyle(.secondary)
+                            .clipShape(Capsule())
                     }
                     Spacer()
                 }
@@ -565,16 +581,27 @@ private struct ProductQuotaSection: View {
                 .background(.quaternary.opacity(0.45))
             }
 
-            ForEach(Array(product.metrics.enumerated()), id: \.element.id) { index, metric in
-                if index > 0 {
-                    Divider()
-                        .padding(.leading, 14)
+            if product.metrics.isEmpty {
+                HStack {
+                    Text("暂无可用额度（已到期或未订购）")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
                 }
-                QuotaMetricRow(
-                    metric: metric,
-                    accent: accent,
-                    refreshIntervalSeconds: refreshIntervalSeconds
-                )
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            } else {
+                ForEach(Array(product.metrics.enumerated()), id: \.element.id) { index, metric in
+                    if index > 0 {
+                        Divider()
+                            .padding(.leading, 14)
+                    }
+                    QuotaMetricRow(
+                        metric: metric,
+                        accent: accent,
+                        refreshIntervalSeconds: refreshIntervalSeconds
+                    )
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -586,13 +613,46 @@ private struct QuotaMetricRow: View {
     let accent: Color
     let refreshIntervalSeconds: Int
 
+    @State private var isExpanded = false
+
     private let titleWidth: CGFloat = 116
     // Longest event copy ("23小时59分后重置", 3-digit-day countdowns) measures
     // ~89–95pt at .caption; 96pt keeps every row single-line while letting the
     // bar take the remaining width.
     private let eventTextWidth: CGFloat = 96
 
+    private var expandableItems: [Stage3ResetEntitlementItem] {
+        metric.resetEntitlements ?? []
+    }
+
     var body: some View {
+        if expandableItems.count < 2 {
+            rowContent(showChevron: false)
+        } else {
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    rowContent(showChevron: true)
+                    if isExpanded {
+                        expandedDetails
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(
+                isExpanded
+                    ? String(localized: "收起重置卡明细")
+                    : String(localized: "展开重置卡明细")
+            )
+        }
+    }
+
+    private func rowContent(showChevron: Bool) -> some View {
         HStack(alignment: .center, spacing: 10) {
             HStack(spacing: 6) {
                 Text(metric.title)
@@ -610,10 +670,18 @@ private struct QuotaMetricRow: View {
             .frame(width: titleWidth, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(valueText)
-                    .font(.subheadline)
-                    .foregroundStyle(valueColor)
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(valueText)
+                        .font(.subheadline)
+                        .foregroundStyle(valueColor)
+                        .lineLimit(1)
+                    if showChevron {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                }
 
                 if let progress = metric.value.progressFraction {
                     ProgressView(value: progress)
@@ -641,6 +709,54 @@ private struct QuotaMetricRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .accessibilityElement(children: .combine)
+    }
+
+    private var expandedDetails: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("重置卡到期时间")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 0) {
+                ForEach(Array(expandableItems.enumerated()), id: \.element.id) { index, item in
+                    if index > 0 {
+                        Divider()
+                            .padding(.leading, 12)
+                    }
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(detailTitle(item))
+                            .font(.caption)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Text(String(localized: "将于 \(absoluteDateTimeText(item.expiresAt)) 到期"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+            }
+            .background(
+                Color(nsColor: .textBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 14)
+        .padding(.bottom, 4)
+    }
+
+    private func detailTitle(_ item: Stage3ResetEntitlementItem) -> String {
+        if let title = item.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
+        }
+        return String(localized: "重置权益")
     }
 
     private var valueText: String {
@@ -695,15 +811,7 @@ private struct QuotaMetricRow: View {
 
         switch event.style {
         case .absoluteDateTime:
-            let value = event.occursAt.formatted(
-                .dateTime
-                    .locale(Locale(identifier: "zh_CN"))
-                    .month(.defaultDigits)
-                    .day(.defaultDigits)
-                    .hour(.twoDigits(amPM: .omitted))
-                    .minute(.twoDigits)
-            )
-            return "\(value) \(suffix)"
+            return "\(absoluteDateTimeText(event.occursAt)) \(suffix)"
         case .relativeCountdown:
             let seconds = max(Int(event.occursAt.timeIntervalSinceNow), 0)
             let days = seconds / 86_400
@@ -717,6 +825,17 @@ private struct QuotaMetricRow: View {
             }
             return String(localized: "\(minutes)分钟后\(suffix)")
         }
+    }
+
+    private func absoluteDateTimeText(_ date: Date) -> String {
+        date.formatted(
+            .dateTime
+                .locale(Locale(identifier: "zh_CN"))
+                .month(.defaultDigits)
+                .day(.defaultDigits)
+                .hour(.twoDigits(amPM: .omitted))
+                .minute(.twoDigits)
+        )
     }
 
     private func formatPercent(_ value: Double) -> String {

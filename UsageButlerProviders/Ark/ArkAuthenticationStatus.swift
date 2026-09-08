@@ -68,7 +68,8 @@ enum ArkAuthenticationStatusParser {
     }
 
     static func parse(_ data: Data) throws -> ParsedArkAuthenticationStatus {
-        let dto = try JSONDecoder().decode(DTO.self, from: data)
+        let sanitized = ArkJSONSanitizer.extractJSONData(from: data)
+        let dto = try JSONDecoder().decode(DTO.self, from: sanitized)
         return ParsedArkAuthenticationStatus(
             controlPlane: dto.controlPlane.map { .init(status: normalized($0.status)) },
             accountID: dto.volcSSO?.identity?.trn == dto.activeProfile?.owner_trn

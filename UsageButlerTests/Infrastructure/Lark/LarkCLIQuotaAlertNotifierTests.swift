@@ -279,7 +279,59 @@ final class LarkCLIQuotaAlertNotifierTests: XCTestCase {
 
         let status = await reader.read()
 
-        XCTAssertEqual(status, .needsSetup)
+        XCTAssertEqual(status, .needsChatID)
+    }
+
+    private final class TestBox<T>: @unchecked Sendable {
+        var value: T
+        init(_ value: T) { self.value = value }
+    }
+
+    func testStatusReaderEvaluatesDestinationConfiguredDynamically() async {
+        let configured = TestBox(false)
+        let client = FakeLarkProcessClient(
+            result: successOutput(
+                #"{"identities":{"bot":{"status":"ready","available":true}}}"#
+            )
+        )
+        let reader = LarkCLIQuotaAlertStatusReader(
+            processClient: client,
+            executableURL: URL(fileURLWithPath: "/fake/lark-cli"),
+            baseEnvironment: ["PATH": "/usr/bin:/bin", "HOME": "/Users/tester"],
+            isDestinationConfigured: { configured.value }
+        )
+
+        let statusBefore = await reader.read()
+        XCTAssertEqual(statusBefore, .needsChatID)
+
+        configured.value = true
+        let statusAfter = await reader.read()
+        XCTAssertEqual(statusAfter, .ready)
+    }
+
+    func testNotifierResolvesChatIDDynamically() async {
+        let currentChatID = TestBox<String?>(nil)
+        let client = FakeLarkProcessClient(result: successOutput(#"{"ok":true}"#))
+        let notifier = LarkCLIQuotaAlertNotifier(
+            processClient: client,
+            executableURL: URL(fileURLWithPath: "/fake/lark-cli"),
+            baseEnvironment: ["PATH": "/usr/bin:/bin", "HOME": "/Users/tester"],
+            chatIDProvider: { currentChatID.value }
+        )
+
+        let missingResult = await notifier.send(payload)
+        guard case let .failure(failure) = missingResult else {
+            XCTFail("Missing chat ID must fail")
+            return
+        }
+        XCTAssertEqual(failure.diagnosticCode, "quotaAlert.lark.chat_id_missing")
+
+        currentChatID.value = "oc_dynamic_chat"
+        let successResult = await notifier.send(payload)
+        guard case .success = successResult else {
+            XCTFail("Configured chat ID must succeed")
+            return
+        }
     }
 
     func testStatusReaderTreatsAuthErrorEnvelopeAsNeedsSetup() async {

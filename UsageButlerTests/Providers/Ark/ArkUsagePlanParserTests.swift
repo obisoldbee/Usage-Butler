@@ -1884,6 +1884,74 @@ final class ArkUsagePlanParserTests: XCTestCase {
         }
         """
     }
+
+    func testTrailingCLIUpgradeNoticeIsSanitizedAndDecodedSuccessfully() throws {
+        let json =
+            """
+            {
+              "items": [
+                {
+                  "product": "coding-plan",
+                  "subscribed": true,
+                  "periods": [
+                    { "label": "session", "percent": 0 },
+                    { "label": "weekly", "percent": 0.07, "reset_at": "2026-09-07T00:00:00+08:00" }
+                  ]
+                }
+              ]
+            }
+
+            发现 arkcli 新版本：1.0.24 → 1.0.25
+            运行 arkcli update 完成升级
+            """
+
+        let snapshot = try parse(json)
+        XCTAssertEqual(snapshot.codingPlan.presence, .entitled)
+        XCTAssertEqual(snapshot.codingPlan.uniqueItem?.periods.count, 2)
+    }
+
+    func testOmittedProductInCompleteAuthoritativeDiscoveryResolvesToNotEntitled() throws {
+        let json =
+            """
+            {
+              "items": [
+                {
+                  "product": "coding-plan",
+                  "subscribed": true,
+                  "periods": [
+                    { "label": "session", "percent": 0 },
+                    { "label": "weekly", "percent": 0.07, "reset_at": "2026-09-07T00:00:00+08:00" },
+                    { "label": "monthly", "percent": 2.55, "reset_at": "2026-09-18T23:59:59+08:00" }
+                  ]
+                }
+              ]
+            }
+            """
+
+        let snapshot = try parse(json)
+        XCTAssertEqual(snapshot.codingPlan.presence, .entitled)
+        guard case let .notEntitled(evidence) = snapshot.agentPlan.presence else {
+            return XCTFail("Omitted agent-plan in complete authoritative discovery should resolve to notEntitled")
+        }
+        XCTAssertEqual(evidence.authority, "ark.usage-plan.omitted")
+
+        let data = try ArkDomainMapper.map(snapshot, source: sourceIdentity)
+        let coding = try XCTUnwrap(data.products.first { $0.sourceProductID == "coding-plan" })
+        let agent = try XCTUnwrap(data.products.first { $0.sourceProductID == "agent-plan" })
+
+        guard case .entitled = coding.state.presence else {
+            return XCTFail("coding product should be entitled")
+        }
+        XCTAssertNil(coding.state.failure)
+        guard case .notEntitled = agent.state.presence else {
+            return XCTFail("omitted agent product should be notEntitled")
+        }
+        XCTAssertNil(agent.state.failure)
+
+        let authoritative = ArkDomainMapper.authoritativeProducts(from: data)
+        XCTAssertEqual(authoritative.count, 2)
+        XCTAssertTrue(ArkDomainMapper.isCompleteKnownProductRead(snapshot, data: data))
+    }
 }
 
 private actor ArkFixedClock: ClockPort {

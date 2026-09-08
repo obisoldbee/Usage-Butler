@@ -327,6 +327,15 @@ final class MenuPanelRuntimeBridgeTests: XCTestCase {
         }
         await model.loadLarkQuotaAlertChannelStatus()
         XCTAssertEqual(model.larkQuotaAlertChannelStatus, .needsSetup)
+
+        configureDiagnostics(
+            model,
+            larkStatusLoader: { .needsChatID }
+        ) {
+            .loaded([])
+        }
+        await model.loadLarkQuotaAlertChannelStatus()
+        XCTAssertEqual(model.larkQuotaAlertChannelStatus, .needsChatID)
     }
 
     #if USAGE_BUTLER_FIXTURES

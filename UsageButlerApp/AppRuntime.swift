@@ -655,6 +655,8 @@ final class AppRuntime: ObservableObject {
         switch await reader.read() {
         case .ready:
             return .ready
+        case .needsChatID:
+            return .needsChatID
         case .needsSetup:
             return .needsSetup
         case .unavailable:

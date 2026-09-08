@@ -65,33 +65,32 @@ public struct MenuPanelRootView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Image(systemName: "chart.bar.fill")
-                .font(.title2)
-                .foregroundStyle(.blue)
-                .frame(width: 34, height: 34)
-                .background(.blue.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("额度管家")
-                    .font(.headline)
-                Text("Usage-Butler")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 8)
-
-            Picker("页面", selection: $model.selectedPage) {
+            HStack(spacing: 24) {
                 ForEach(MenuPage.allCases) { page in
-                    Text(page.title).tag(page)
+                    Button {
+                        model.selectedPage = page
+                    } label: {
+                        Text(page.title)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(model.selectedPage == page ? .primary : .secondary)
+                            .frame(minWidth: 44, maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .bottom) {
+                                if model.selectedPage == page {
+                                    Capsule()
+                                        .fill(Color.accentColor)
+                                        .frame(height: 3)
+                                        .padding(.bottom, 1)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(model.selectedPage == page ? .isSelected : [])
+                    .accessibilityIdentifier("menu.page.\(page.rawValue)")
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 170)
 
-            Spacer(minLength: 8)
+            Spacer(minLength: 16)
 
             Button {
                 model.requestManualRefresh()
@@ -103,15 +102,18 @@ public struct MenuPanelRootView: View {
                     Image(systemName: "arrow.clockwise")
                 }
             }
+            .frame(width: 28, height: 32)
             .buttonStyle(.borderless)
             .disabled(model.isManualRefreshInFlight)
             .help("刷新")
             .accessibilityLabel("刷新")
 
             settingsButton
+                .frame(width: 28, height: 32)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .font(.system(size: 17))
+        .padding(.horizontal, 20)
+        .frame(height: 56)
     }
 
     @ViewBuilder

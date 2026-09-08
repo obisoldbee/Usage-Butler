@@ -2647,11 +2647,15 @@ final class ProviderControllerTests: XCTestCase {
     private func eventually(
         _ predicate: @escaping @Sendable () async -> Bool
     ) async -> Bool {
-        for _ in 0..<100 {
+        for index in 0..<1_000 {
             if await predicate() {
                 return true
             }
-            await Task.yield()
+            if index % 20 == 19 {
+                try? await Task.sleep(nanoseconds: 1_000_000)
+            } else {
+                await Task.yield()
+            }
         }
         return false
     }

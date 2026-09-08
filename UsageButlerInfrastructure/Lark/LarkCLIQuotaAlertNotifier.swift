@@ -5,6 +5,7 @@ import UsageButlerDomain
 public enum LarkCLIQuotaAlertAvailability: Equatable, Sendable {
     case ready
     case needsSetup
+    case needsChatID
     case unavailable
 }
 
@@ -45,13 +46,13 @@ public actor LarkCLIQuotaAlertStatusReader {
     private let processClient: any ChildProcessClient
     private let executableURL: URL
     private let environment: [String: String]
-    private let isDestinationConfigured: Bool
+    private let isDestinationConfigured: @Sendable () -> Bool
 
     public init(
         processClient: any ChildProcessClient,
         executableURL: URL,
         baseEnvironment: [String: String],
-        isDestinationConfigured: Bool
+        isDestinationConfigured: @escaping @Sendable () -> Bool
     ) {
         self.processClient = processClient
         self.executableURL = executableURL
@@ -59,6 +60,20 @@ public actor LarkCLIQuotaAlertStatusReader {
             baseEnvironment: baseEnvironment
         )
         self.isDestinationConfigured = isDestinationConfigured
+    }
+
+    public init(
+        processClient: any ChildProcessClient,
+        executableURL: URL,
+        baseEnvironment: [String: String],
+        isDestinationConfigured: Bool
+    ) {
+        self.init(
+            processClient: processClient,
+            executableURL: executableURL,
+            baseEnvironment: baseEnvironment,
+            isDestinationConfigured: { isDestinationConfigured }
+        )
     }
 
     public func read() async -> LarkCLIQuotaAlertAvailability {
@@ -86,7 +101,7 @@ public actor LarkCLIQuotaAlertStatusReader {
             guard bot.status == "ready" && bot.available else {
                 return .needsSetup
             }
-            return isDestinationConfigured ? .ready : .needsSetup
+            return isDestinationConfigured() ? .ready : .needsChatID
         }
         return envelope.ok == false ? .needsSetup : .unavailable
     }
@@ -120,7 +135,21 @@ public actor LarkCLIQuotaAlertNotifier: QuotaAlertNotifier {
     private let processClient: any ChildProcessClient
     private let executableURL: URL
     private let environment: [String: String]
-    private let chatID: String
+    private let chatIDProvider: @Sendable () -> String?
+
+    public init(
+        processClient: any ChildProcessClient,
+        executableURL: URL,
+        baseEnvironment: [String: String],
+        chatIDProvider: @escaping @Sendable () -> String?
+    ) {
+        self.processClient = processClient
+        self.executableURL = executableURL
+        self.environment = larkQuotaAlertEnvironment(
+            baseEnvironment: baseEnvironment
+        )
+        self.chatIDProvider = chatIDProvider
+    }
 
     public init?(
         processClient: any ChildProcessClient,
@@ -128,20 +157,25 @@ public actor LarkCLIQuotaAlertNotifier: QuotaAlertNotifier {
         baseEnvironment: [String: String],
         chatID: String
     ) {
-        guard let chatID = LarkQuotaAlertConfiguration.validatedChatID(chatID) else {
+        guard let validated = LarkQuotaAlertConfiguration.validatedChatID(chatID) else {
             return nil
         }
-        self.processClient = processClient
-        self.executableURL = executableURL
-        self.environment = larkQuotaAlertEnvironment(
-            baseEnvironment: baseEnvironment
+        self.init(
+            processClient: processClient,
+            executableURL: executableURL,
+            baseEnvironment: baseEnvironment,
+            chatIDProvider: { validated }
         )
-        self.chatID = chatID
     }
 
     public func prepare() async {}
 
     public func send(_ payload: QuotaAlertPayload) async -> Result<Void, ProviderFailure> {
+        guard let rawChatID = chatIDProvider(),
+              let chatID = LarkQuotaAlertConfiguration.validatedChatID(rawChatID) else {
+            return .failure(Self.destinationMissing)
+        }
+
         let text = ([payload.title] + payload.bodyLines + ["-- 额度管家 Usage-Butler"])
             .joined(separator: "\n")
         let request = ChildProcessRequest(
@@ -176,6 +210,14 @@ public actor LarkCLIQuotaAlertNotifier: QuotaAlertNotifier {
             return .success(())
         }
     }
+
+    private static let destinationMissing = ProviderFailure(
+        code: .protocolViolation,
+        retryClass: .never,
+        userMessageKey: "quota.alert.lark.chat_id_missing",
+        diagnosticCode: "quotaAlert.lark.chat_id_missing",
+        recovery: nil
+    )
 
     private static let rejected = ProviderFailure(
         code: .processFailed,

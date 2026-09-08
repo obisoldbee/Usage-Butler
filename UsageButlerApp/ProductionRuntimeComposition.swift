@@ -182,9 +182,7 @@ enum ProductionRuntimeFactory {
         ]
         var larkProcessClient: OneShotChildProcessClient?
         var larkStatusReader: LarkCLIQuotaAlertStatusReader?
-        let larkChatID = LarkQuotaAlertConfiguration.validatedChatID(
-            defaults.string(forKey: ProviderPreferenceKey.larkQuotaAlertChatID)
-        )
+        let defaultsBox = SendableUserDefaults(defaults: defaults)
 
         if let childEnvironment,
            let executable = try? locator.locate(
@@ -198,25 +196,28 @@ enum ProductionRuntimeFactory {
                 processClient: processClient,
                 executableURL: executable.resolvedFileURL,
                 baseEnvironment: childEnvironment.variables,
-                isDestinationConfigured: larkChatID != nil
+                isDestinationConfigured: {
+                    LarkQuotaAlertConfiguration.validatedChatID(
+                        defaultsBox.defaults.string(forKey: ProviderPreferenceKey.larkQuotaAlertChatID)
+                    ) != nil
+                }
             )
-            if let larkChatID,
-               let notifier = LarkCLIQuotaAlertNotifier(
-                   processClient: processClient,
-                   executableURL: executable.resolvedFileURL,
-                   baseEnvironment: childEnvironment.variables,
-                   chatID: larkChatID
-               ) {
-                channels.append(
-                    QuotaAlertChannel(
-                        id: "lark",
-                        notifier: notifier
-                    )
+            let notifier = LarkCLIQuotaAlertNotifier(
+                processClient: processClient,
+                executableURL: executable.resolvedFileURL,
+                baseEnvironment: childEnvironment.variables,
+                chatIDProvider: {
+                    defaultsBox.defaults.string(forKey: ProviderPreferenceKey.larkQuotaAlertChatID)
+                }
+            )
+            channels.append(
+                QuotaAlertChannel(
+                    id: "lark",
+                    notifier: notifier
                 )
-            }
+            )
         }
 
-        let defaultsBox = SendableUserDefaults(defaults: defaults)
         let service = QuotaAlertService(
             channels: channels,
             markerStore: UserDefaultsQuotaAlertMarkerStore(boxed: defaultsBox),

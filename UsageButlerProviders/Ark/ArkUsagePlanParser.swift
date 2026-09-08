@@ -305,6 +305,25 @@ public struct ParsedArkUsageSnapshot: Equatable, Sendable {
     public func resolution(for productID: ParsedArkProductID) -> ParsedArkProductResolution {
         let matches = items.filter { $0.productID == productID }
         guard matches.count == 1, let item = matches.first else {
+            if matches.isEmpty,
+               context.completeness == .completeSuccess,
+               context.authoritativeDiscovery,
+               envelopeDiagnostics.droppedSupportedItemCount == 0,
+               envelopeDiagnostics.droppedUnclassifiedItemCount == 0,
+               envelopeDiagnostics.droppedItemCount(for: productID) == 0,
+               items.contains(where: { $0.productID.isSupportedProduct }),
+               items.allSatisfy({ !$0.productID.isSupportedProduct || $0.hasCompletePeriodsContract }) {
+                return ParsedArkProductResolution(
+                    productID: productID,
+                    presence: .notEntitled(
+                        ParsedArkPresenceEvidence(
+                            authority: "ark.usage-plan.omitted",
+                            observedAt: context.fetchedAt
+                        )
+                    ),
+                    sourceItems: []
+                )
+            }
             return ParsedArkProductResolution(
                 productID: productID,
                 presence: .unknown(matches.isEmpty ? .missingFromResponse : .duplicateItems),
@@ -396,6 +415,20 @@ public struct ParsedArkParsingFailure: Error, Equatable, Sendable {
     }
 }
 
+public enum ArkJSONSanitizer {
+    public static func extractJSONData(from data: Data) -> Data {
+        guard let firstBrace = data.firstIndex(where: { $0 == 0x7B || $0 == 0x5B }) else {
+            return data
+        }
+        let closingByte: UInt8 = data[firstBrace] == 0x7B ? 0x7D : 0x5D
+        guard let lastClose = data.lastIndex(where: { $0 == closingByte }),
+              firstBrace <= lastClose else {
+            return data
+        }
+        return data.subdata(in: firstBrace..<(lastClose + 1))
+    }
+}
+
 public enum ArkUsagePlanParser {
     public static func parse(
         _ data: Data,
@@ -407,7 +440,8 @@ public enum ArkUsagePlanParser {
 
         let envelope: ArkEnvelopeDTO
         do {
-            envelope = try JSONDecoder().decode(ArkEnvelopeDTO.self, from: data)
+            let sanitized = ArkJSONSanitizer.extractJSONData(from: data)
+            envelope = try JSONDecoder().decode(ArkEnvelopeDTO.self, from: sanitized)
         } catch {
             throw mapDecodingError(error)
         }
@@ -477,7 +511,8 @@ public enum ArkPlanMetadataParser {
 
         let envelope: ArkPlansMetadataEnvelopeDTO
         do {
-            envelope = try JSONDecoder().decode(ArkPlansMetadataEnvelopeDTO.self, from: data)
+            let sanitized = ArkJSONSanitizer.extractJSONData(from: data)
+            envelope = try JSONDecoder().decode(ArkPlansMetadataEnvelopeDTO.self, from: sanitized)
         } catch let DecodingError.keyNotFound(key, context) {
             throw ParsedArkParsingFailure(
                 code: .missingRequiredField,

@@ -187,6 +187,34 @@ final class LiveProviderProjectionMapperTests: XCTestCase {
                 style: .absoluteDateTime
             )
         )
+        XCTAssertEqual(
+            metric.resetEntitlements,
+            [
+                Stage3ResetEntitlementItem(
+                    id: "winner",
+                    title: "Full reset",
+                    expiresAt: winnerExpiry
+                ),
+                Stage3ResetEntitlementItem(
+                    id: "later",
+                    title: "Later reset",
+                    expiresAt: fetchedAt.addingTimeInterval(300)
+                )
+            ]
+        )
+
+        let noDetailsProjection = LiveProviderProjectionMapper.map(
+            providerState(
+                providerID: .openAI,
+                quota: quota(
+                    providerID: .openAI,
+                    products: [],
+                    resetEntitlements: [resetEntitlement(availableCount: 2, details: nil)]
+                )
+            ),
+            now: fixedNow
+        )
+        XCTAssertNil(noDetailsProjection.products.first?.metrics.first?.resetEntitlements)
 
         let zeroProjection = LiveProviderProjectionMapper.map(
             providerState(

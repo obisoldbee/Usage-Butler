@@ -56,6 +56,21 @@ final class PresentationTests: XCTestCase {
         )
     }
 
+    func testImageAssetNamesAreUniqueAndPackageAllProviders() {
+        let assetNames = ProviderID.allCases.compactMap(
+            ProviderPresentation.imageAssetName(for:)
+        )
+        XCTAssertEqual(
+            assetNames.count,
+            ProviderID.allCases.count,
+            "Every provider must have an asset catalog entry"
+        )
+        XCTAssertEqual(Set(assetNames).count, assetNames.count,
+                       "Provider asset names must be unique")
+        XCTAssertTrue(assetNames.allSatisfy { $0.hasPrefix("Provider") })
+        XCTAssertTrue(assetNames.allSatisfy { $0.hasSuffix("Logo") })
+    }
+
     func testPlanBadgeAccessibilityDistinguishesReportedAndInferredTier() {
         XCTAssertEqual(
             PlanBadgePresentation.accessibilityLabel(

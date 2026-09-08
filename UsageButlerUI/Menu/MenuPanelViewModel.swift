@@ -188,6 +188,7 @@ public enum LarkQuotaAlertChannelStatus: Equatable, Sendable {
     case checking
     case ready
     case needsSetup
+    case needsChatID
     case unavailable
 }
 
@@ -235,20 +236,51 @@ public final class MenuPanelViewModel: ObservableObject {
         (@MainActor () async -> LarkQuotaAlertChannelStatus)?
     #if USAGE_BUTLER_FIXTURES
     private var fixtureEnabledProviderIDs: Set<ProviderID>?
+    private var fixtureDisabledProductIDs: [ProviderID: Set<String>] = [:]
     #endif
 
     public init(
         snapshot: Stage3AppProjection,
         settingsProviders: [Stage3ProviderProjection]? = nil
     ) {
-        self.snapshot = snapshot
-        self.settingsProviders = (settingsProviders ?? snapshot.providers)
+        let fullSettings = (settingsProviders ?? snapshot.providers)
             .sorted { $0.id.canonicalOrder < $1.id.canonicalOrder }
+        self.settingsProviders = fullSettings
         #if USAGE_BUTLER_FIXTURES
         if snapshot.providers.contains(where: { $0.origin.isFixture })
             || snapshot.memory.origin.isFixture {
             fixtureEnabledProviderIDs = Set(snapshot.providers.map(\.id))
         }
+        #endif
+        let filteredProviders = snapshot.providers.map { provider in
+            guard let full = fullSettings.first(where: { $0.id == provider.id }) else {
+                return provider
+            }
+            let filtered = full.products.filter { product in
+                guard let sourceID = product.sourceProductID else { return true }
+                return ProviderPreferenceKey.isProductEnabled(providerID: provider.id, sourceProductID: sourceID)
+            }
+            return provider.withProducts(filtered)
+        }
+        #if USAGE_BUTLER_FIXTURES
+        if snapshot.providers.contains(where: { $0.origin.isFixture })
+            || snapshot.memory.origin.isFixture {
+            self.snapshot = Stage3AppProjection(
+                scenario: snapshot.scenario,
+                providers: filteredProviders.sorted { $0.id.canonicalOrder < $1.id.canonicalOrder },
+                memory: snapshot.memory
+            )
+        } else {
+            self.snapshot = Stage3AppProjection(
+                providers: filteredProviders.sorted { $0.id.canonicalOrder < $1.id.canonicalOrder },
+                memory: snapshot.memory
+            )
+        }
+        #else
+        self.snapshot = Stage3AppProjection(
+            providers: filteredProviders.sorted { $0.id.canonicalOrder < $1.id.canonicalOrder },
+            memory: snapshot.memory
+        )
         #endif
     }
 
@@ -436,6 +468,56 @@ public final class MenuPanelViewModel: ObservableObject {
         larkQuotaAlertChannelStatus = await onLoadLarkQuotaAlertChannelStatus()
     }
 
+    public func isProductEnabled(providerID: ProviderID, productID: String) -> Bool {
+        #if USAGE_BUTLER_FIXTURES
+        if isFixtureMode, let disabled = fixtureDisabledProductIDs[providerID] {
+            return !disabled.contains(productID)
+        }
+        #endif
+        return ProviderPreferenceKey.isProductEnabled(providerID: providerID, sourceProductID: productID)
+    }
+
+    public func setProductEnabled(
+        _ providerID: ProviderID,
+        productID: String,
+        enabled: Bool
+    ) {
+        #if USAGE_BUTLER_FIXTURES
+        if isFixtureMode {
+            if enabled {
+                fixtureDisabledProductIDs[providerID]?.remove(productID)
+            } else {
+                if fixtureDisabledProductIDs[providerID] == nil {
+                    fixtureDisabledProductIDs[providerID] = []
+                }
+                fixtureDisabledProductIDs[providerID]?.insert(productID)
+            }
+        } else {
+            let key = ProviderPreferenceKey.productEnabledKey(for: providerID, sourceProductID: productID)
+            UserDefaults.standard.set(enabled, forKey: key)
+        }
+        #else
+        let key = ProviderPreferenceKey.productEnabledKey(for: providerID, sourceProductID: productID)
+        UserDefaults.standard.set(enabled, forKey: key)
+        #endif
+
+        reapplyProductFilters()
+    }
+
+    public func reapplyProductFilters() {
+        let visible = snapshot.providers.map { provider in
+            guard let full = settingsProviders.first(where: { $0.id == provider.id }) else {
+                return provider
+            }
+            let filtered = full.products.filter { product in
+                guard let sourceID = product.sourceProductID else { return true }
+                return isProductEnabled(providerID: provider.id, productID: sourceID)
+            }
+            return provider.withProducts(filtered)
+        }
+        replaceSnapshot(providers: visible)
+    }
+
     public func applyProviderProjection(
         _ projection: ProviderProjection,
         now: Date
@@ -452,7 +534,10 @@ public final class MenuPanelViewModel: ObservableObject {
         var visibleProviders = snapshot.providers
         if let visibleProjection = LiveProviderProjectionMapper.map(
             projection,
-            now: now
+            now: now,
+            isProductEnabled: { [weak self] providerID, productID in
+                self?.isProductEnabled(providerID: providerID, productID: productID) ?? true
+            }
         ) {
             visibleProviders = replacing(
                 provider: visibleProjection,

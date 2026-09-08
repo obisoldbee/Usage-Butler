@@ -130,6 +130,18 @@ public struct Stage3TimeEvent: Equatable, Sendable {
     }
 }
 
+public struct Stage3ResetEntitlementItem: Equatable, Identifiable, Sendable {
+    public let id: String
+    public let title: String?
+    public let expiresAt: Date
+
+    public init(id: String, title: String?, expiresAt: Date) {
+        self.id = id
+        self.title = title
+        self.expiresAt = expiresAt
+    }
+}
+
 public struct Stage3QuotaMetricProjection: Equatable, Identifiable, Sendable {
     public let id: String
     public let title: String
@@ -137,6 +149,7 @@ public struct Stage3QuotaMetricProjection: Equatable, Identifiable, Sendable {
     public let value: Stage3QuotaValue
     public let event: Stage3TimeEvent?
     public let dataState: Stage3QuotaMetricDataState?
+    public let resetEntitlements: [Stage3ResetEntitlementItem]?
 
     public init(
         id: String,
@@ -144,7 +157,8 @@ public struct Stage3QuotaMetricProjection: Equatable, Identifiable, Sendable {
         windowBadge: String? = nil,
         value: Stage3QuotaValue,
         event: Stage3TimeEvent? = nil,
-        dataState: Stage3QuotaMetricDataState? = nil
+        dataState: Stage3QuotaMetricDataState? = nil,
+        resetEntitlements: [Stage3ResetEntitlementItem]? = nil
     ) {
         self.id = id
         self.title = title
@@ -152,22 +166,26 @@ public struct Stage3QuotaMetricProjection: Equatable, Identifiable, Sendable {
         self.value = value
         self.event = event
         self.dataState = dataState
+        self.resetEntitlements = resetEntitlements
     }
 }
 
 public struct Stage3QuotaProductProjection: Equatable, Identifiable, Sendable {
     public let id: String
+    public let sourceProductID: String?
     public let title: String?
     public let planLevel: Stage3PlanBadge?
     public let metrics: [Stage3QuotaMetricProjection]
 
     public init(
         id: String,
+        sourceProductID: String? = nil,
         title: String? = nil,
         planLevel: Stage3PlanBadge? = nil,
         metrics: [Stage3QuotaMetricProjection]
     ) {
         self.id = id
+        self.sourceProductID = sourceProductID
         self.title = title
         self.planLevel = planLevel
         self.metrics = metrics
@@ -220,6 +238,25 @@ public struct Stage3ProviderProjection: Equatable, Identifiable, Sendable {
         self.products = products
         self.capturedAt = capturedAt
         self.origin = origin
+    }
+
+    public func withProducts(_ newProducts: [Stage3QuotaProductProjection]) -> Stage3ProviderProjection {
+        Stage3ProviderProjection(
+            id: id,
+            rowState: rowState,
+            dataState: dataState,
+            activity: activity,
+            partialDataState: partialDataState,
+            failureCode: failureCode,
+            loginMethod: loginMethod,
+            authenticationExpiresAt: authenticationExpiresAt,
+            hasOfficialDocumentation: hasOfficialDocumentation,
+            allowsExecutableSelection: allowsExecutableSelection,
+            planLevel: planLevel,
+            products: newProducts,
+            capturedAt: capturedAt,
+            origin: origin
+        )
     }
 }
 
