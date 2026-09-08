@@ -22,6 +22,33 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 - 支持系统通知；安装并配置 `lark-cli` 后可选用飞书通知。
 - Provider 不可用、未登录或数据过期时，显示明确状态，不伪造可用额度。
 
+## 界面预览
+
+### 订阅额度
+
+集中查看各服务的额度与刷新时间；有多张可用重置卡明细时，可展开查看各自的到期时间。
+
+<img src="docs/images/quota-overview.png" alt="额度页面：OpenAI、MiniMax 和火山方舟的订阅额度概览" width="540">
+
+### 内存概览
+
+查看内存压力趋势、不同时间范围及内存使用明细。
+
+<img src="docs/images/memory-overview.png" alt="内存页面：压力趋势图、时间范围选择与内存使用明细" width="540">
+
+截图中的套餐、额度与时间仅代表拍摄时的状态，不代表每个账号都拥有相同权益。
+
+### 菜单栏的四种内存状态
+
+芯片轮廓保持不变，中心颜色随系统内存压力变化。下图使用应用实际绘制的图标，并放大展示。
+
+| 正常 | 警告 | 严重 | 未知／数据失效 |
+| :---: | :---: | :---: | :---: |
+| <img src="docs/images/memory-normal.png" alt="绿色芯片：内存压力正常" width="40" height="36"> | <img src="docs/images/memory-warning.png" alt="黄色芯片：内存压力警告" width="40" height="36"> | <img src="docs/images/memory-critical.png" alt="红色芯片：内存压力严重" width="40" height="36"> | <img src="docs/images/memory-unknown.png" alt="灰色芯片：内存压力未知或数据失效" width="40" height="36"> |
+| 绿色 | 黄色 | 红色 | 灰色 |
+
+颜色表达的是**内存压力状态**，不按内存占用百分比划分；采样超过 30 秒未更新时显示灰色。
+
 ## 环境要求
 
 - macOS 13 或更高版本
