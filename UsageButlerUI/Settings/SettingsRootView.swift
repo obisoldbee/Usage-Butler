@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UsageButlerCore
 import UsageButlerDomain
@@ -27,6 +28,7 @@ public struct SettingsRootView: View {
                 generalSection
                 shortcutSection
                 providerSection
+                networkSection
                 aboutSection
             }
             .padding(24)
@@ -300,6 +302,26 @@ public struct SettingsRootView: View {
         }
     }
 
+    private var networkSection: some View {
+        SettingsSection(title: String(localized: "网络")) {
+            SettingsRow(
+                title: String(localized: "采集网络用量"),
+                subtitle: String(localized: "仅统计各网络接口字节数；不识别应用，关闭面板不停止采集")
+            ) {
+                // The switch shows what the collector actually acknowledged,
+                // not what was last written to preferences. They only agree
+                // when the store read back cleanly, and a corrupt store must
+                // surface as "not collecting" rather than a stale true.
+                Toggle(String(localized: "采集网络用量"), isOn: Binding(
+                    get: { model.networkCollectionEnabled },
+                    set: { model.setNetworkCollectionEnabled($0) }
+                ))
+                .labelsHidden()
+                .accessibilityIdentifier("settings.network.collectionEnabled")
+            }
+        }
+    }
+
     private var aboutSection: some View {
         SettingsSection(title: "关于") {
             HStack(spacing: 12) {
@@ -315,7 +337,7 @@ public struct SettingsRootView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("0.1.0 (1)")
+                Text("\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"))")
                     .foregroundStyle(.secondary)
             }
             .padding(12)
@@ -351,6 +373,12 @@ public struct SettingsRootView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             HStack {
+                Button("在访达中显示诊断记录") {
+                    let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                        .appendingPathComponent("Usage-Butler/diagnostics", isDirectory: true)
+                    let file = directory.appendingPathComponent("provider-events-v1.json")
+                    NSWorkspace.shared.activateFileViewerSelecting([FileManager.default.fileExists(atPath: file.path) ? file : directory])
+                }
                 Spacer()
                 Button("完成") { showingDiagnostics = false }
                     .keyboardShortcut(.defaultAction)
@@ -423,6 +451,18 @@ public struct SettingsRootView: View {
                         .textSelection(.enabled)
                 }
             }
+            if !diagnostic.journalAvailable {
+                Text("诊断记录暂时无法保存，请检查本地文件权限或可用空间。")
+                    .foregroundStyle(.orange)
+            }
+            if diagnostic.events.isEmpty {
+                Text("暂无已记录的失败或恢复事件。")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("最近失败与恢复（保留 7 天，最多 200 条）").font(.subheadline.weight(.medium))
+                ForEach(diagnostic.events) { event in DiagnosticEventView(event: event) }
+            }
+
         }
     }
 

@@ -1425,7 +1425,8 @@ public actor ProviderController {
             revision: revision,
             isEnabled: isEnabled,
             phase: phase,
-            state: state
+            state: state,
+            automaticRefresh: { if case .automatic = policy.cadence { return true }; return false }()
         )
     }
 

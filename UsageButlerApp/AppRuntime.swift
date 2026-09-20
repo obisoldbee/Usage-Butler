@@ -38,6 +38,7 @@ final class AppRuntime: ObservableObject {
     private var loggedProviderStates: [ProviderID: ProviderRuntimeTelemetryState] = [:]
     private var isShuttingDown = false
     private var isPanelVisible = false
+    private var networkPathLastRead: Date?
 
     init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -230,6 +231,12 @@ final class AppRuntime: ObservableObject {
             onLoadLarkQuotaAlertChannelStatus: { [weak self] in
                 guard let self else { return .unavailable }
                 return await self.loadLarkQuotaAlertChannelStatus()
+            },
+            onNetworkPageVisibilityChanged: { [weak self] _ in
+                self?.refreshNetworkPublishPolicy()
+            },
+            onSetNetworkCollectionEnabled: { [weak self] enabled in
+                await self?.setNetworkCollectionEnabled(enabled)
             }
         )
     }
@@ -277,6 +284,17 @@ final class AppRuntime: ObservableObject {
         }
         observationTasks.append(memoryTask)
 
+        let networkCollector = composition.networkCollector
+        let networkPathReader = composition.networkPathReader
+        observationTasks.append(Task { @MainActor [weak self] in
+            let updates = await networkCollector.updates()
+            for await snapshot in updates {
+                guard !Task.isCancelled else { return }
+                self?.refreshNetworkSystemPath(reader: networkPathReader)
+                self?.menuModel.applyNetworkSnapshot(snapshot)
+            }
+        })
+
         let wakeNotifications = NSWorkspace.shared.notificationCenter.notifications(
             named: NSWorkspace.didWakeNotification
         )
@@ -292,6 +310,8 @@ final class AppRuntime: ObservableObject {
         guard !Task.isCancelled, !isShuttingDown else { return }
 
         await memoryController.start()
+        await networkCollector.start()
+        refreshNetworkPublishPolicy()
         let controllers = Array(composition.controllers.values)
         await withTaskGroup(of: Void.self) { group in
             for controller in controllers {
@@ -342,6 +362,11 @@ final class AppRuntime: ObservableObject {
             return
         }
         guard !isShuttingDown else { return }
+
+        if menuModel.selectedPage == .network {
+            await composition.networkCollector.refreshNow()
+            return
+        }
 
         let controllers = Array(composition.controllers.values)
         await withTaskGroup(of: Void.self) { group in
@@ -635,13 +660,17 @@ final class AppRuntime: ObservableObject {
             return .unavailable(.runtimeCompositionUnavailable)
         }
 
+        let journal = await composition.diagnosticJournal.snapshot()
         var snapshots: [SafeProviderDiagnostic] = []
         snapshots.reserveCapacity(adapters.count)
         for adapter in adapters {
             guard !Task.isCancelled, !isShuttingDown else {
                 return .failed(.runtimeShuttingDown)
             }
-            snapshots.append(await adapter.diagnosticSnapshot())
+            let current = await adapter.diagnosticSnapshot()
+            snapshots.append(SafeProviderDiagnostic(providerID: current.providerID, capturedAt: current.capturedAt,
+                diagnosticCode: current.diagnosticCode, safeFields: current.safeFields,
+                events: journal.events.filter { $0.provider == adapter.id.rawValue }, journalAvailable: journal.state == .ready))
         }
         return .loaded(snapshots)
     }
@@ -671,6 +700,7 @@ final class AppRuntime: ObservableObject {
         guard visible != isPanelVisible else { return }
         isPanelVisible = visible
         refreshMemorySamplingPolicy()
+        refreshNetworkPublishPolicy()
     }
 
     private func refreshMemorySamplingPolicy() {
@@ -684,6 +714,61 @@ final class AppRuntime: ObservableObject {
                 isMemoryPageActive ? .memoryPageVisible : .other
             )
         }
+    }
+
+    /// The 1 Hz publish cadence applies only while the panel is visible on the
+    /// network page; anything else drops to the background cadence. Source
+    /// sampling itself never depends on panel visibility.
+    private func refreshNetworkPublishPolicy() {
+        guard let collector = composition?.networkCollector,
+              !isShuttingDown else {
+            return
+        }
+        let isNetworkPageActive = isPanelVisible && menuModel.selectedPage == .network
+        Task {
+            await collector.updatePolicy(
+                isNetworkPageActive ? .panelVisible : .background
+            )
+        }
+    }
+
+    /// Cached so the page still shows what it measured for a moment after the
+    /// system stops answering, instead of flickering to "not identified".
+    private static let networkPathReuseInterval: TimeInterval = 5
+
+    private func refreshNetworkSystemPath(reader: any NetworkPathProviding, now: Date = Date()) {
+        if let lastRead = networkPathLastRead,
+           now.timeIntervalSince(lastRead) < Self.networkPathReuseInterval {
+            return
+        }
+        networkPathLastRead = now
+        menuModel.setNetworkSystemPath(reader.currentPath(), at: now)
+    }
+
+    /// Debug acceptance hook: silences the real collector so a scripted run is
+    /// the only thing feeding the page, and reports what it observed. Toggling
+    /// the setting alone is not enough — `start()` may still be in flight and
+    /// would begin a session from the settings it loaded earlier.
+    #if DEBUG
+    func debugQuiesceNetworkCollection() async -> String {
+        guard let collector = composition?.networkCollector else { return "no-collector" }
+        await collector.setCollectionEnabled(false)
+        await collector.stop()
+        for _ in 0..<20 {
+            let state = await collector.collectionStateNow()
+            if state == .stopped { return "stopped" }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return "not-stopped"
+    }
+    #endif
+
+    private func setNetworkCollectionEnabled(_ enabled: Bool) async {
+        guard let collector = composition?.networkCollector,
+              !isShuttingDown else {
+            return
+        }
+        await collector.setCollectionEnabled(enabled)
     }
 
     /// Persists the global panel shortcut and re-registers the hotkey.
@@ -702,7 +787,23 @@ final class AppRuntime: ObservableObject {
     private func receiveProviderProjection(_ projection: ProviderProjection) {
         let telemetryState = ProviderRuntimeTelemetryState(projection: projection)
         if loggedProviderStates[projection.state.id] != telemetryState {
+            let previous = loggedProviderStates[projection.state.id]
             loggedProviderStates[projection.state.id] = telemetryState
+            if let journal = composition?.diagnosticJournal {
+                let failed = telemetryState.failure != "none" && telemetryState.activity == "idle"
+                let recovered = telemetryState.failure == "none" && previous?.failure != nil
+                    && previous?.failure != "none" && telemetryState.freshness == "fresh"
+                if failed || recovered {
+                    let reading = ClockReading(wallTime: Date(), monotonicTime: .init(nanoseconds: DispatchTime.now().uptimeNanoseconds))
+                    let event = ProviderDiagnosticEvent(providerID: projection.state.id,
+                        stage: recovered ? .recovery : .runtime, reason: recovered ? .recovered : .providerFailure,
+                        timestamp: reading.wallTime,
+                        failureCode: projection.state.scopedFailures.current?.failure.code,
+                        retryAt: projection.automaticRefresh ? ProviderRetryTiming.date(for: projection.state.refresh.gate, reading: reading) : nil,
+                        retryGate: .init(projection.state.refresh.gate), automaticRetry: projection.automaticRefresh)
+                    Task { await journal.record(event) }
+                }
+            }
             Self.providerRefreshLogger.info(
                 "\(ProviderRefreshTelemetry.providerStateMessage(telemetryState), privacy: .public)"
             )
@@ -794,6 +895,7 @@ final class AppRuntime: ObservableObject {
         }
 
         await composition.memoryController.stop()
+        await composition.networkCollector.stop()
         if let store = composition.memoryHistoryStore {
             let referenceTimestamp = latestMemoryState?.latest?.timestamp ?? Date()
             let points = mergedMemoryHistory(
@@ -835,7 +937,8 @@ final class AppRuntime: ObservableObject {
             ProviderPreferenceKey.openAIRefreshOverrideSeconds: -1,
             ProviderPreferenceKey.miniMaxRefreshOverrideSeconds: -1,
             ProviderPreferenceKey.arkRefreshOverrideSeconds: -1,
-            ProviderPreferenceKey.quotaAlertsEnabled: true
+            ProviderPreferenceKey.quotaAlertsEnabled: true,
+            NetworkPreferenceKey.collectionEnabled: false
         ])
     }
 

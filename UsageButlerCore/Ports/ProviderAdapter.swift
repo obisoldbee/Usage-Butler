@@ -26,17 +26,23 @@ public struct SafeProviderDiagnostic: Equatable, Sendable {
     public let capturedAt: Date
     public let diagnosticCode: String
     public let safeFields: [String: String]
+    public let events: [ProviderDiagnosticEvent]
+    public let journalAvailable: Bool
 
     public init(
         providerID: ProviderID,
         capturedAt: Date,
         diagnosticCode: String,
-        safeFields: [String: String]
+        safeFields: [String: String],
+        events: [ProviderDiagnosticEvent] = [],
+        journalAvailable: Bool = true
     ) {
         self.providerID = providerID
         self.capturedAt = capturedAt
         self.diagnosticCode = diagnosticCode
         self.safeFields = safeFields
+        self.events = events
+        self.journalAvailable = journalAvailable
     }
 }
 

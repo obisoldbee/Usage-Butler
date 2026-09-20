@@ -498,6 +498,11 @@ public actor MiniMaxProviderAdapter: ProviderAdapter {
     private var isShutdown = false
     private var lastErrorClass = "none"
     private var schemaState = "not-observed"
+    private let diagnostics: (any ProviderDiagnosticRecording)?
+    private let diagnosticCLIVersion: String?
+    private let diagnosticExecutableDigest: String?
+    private let diagnosticIdentity: (@Sendable () -> (version: String?, digest: String?))?
+    private var latestDiagnosticVersion: String?
 
     public init(
         processClient: any ChildProcessClient,
@@ -507,7 +512,11 @@ public actor MiniMaxProviderAdapter: ProviderAdapter {
         cliVersion: RuntimeContractFieldObservation = .unverified,
         region: RuntimeContractFieldObservation = .unverified,
         catalogID: RuntimeContractFieldObservation = .unverified,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        diagnostics: (any ProviderDiagnosticRecording)? = nil,
+        diagnosticCLIVersion: String? = nil,
+        diagnosticExecutableDigest: String? = nil,
+        diagnosticIdentity: (@Sendable () -> (version: String?, digest: String?))? = nil
     ) {
         self.processClient = processClient
         self.executableURL = executableURL
@@ -517,6 +526,10 @@ public actor MiniMaxProviderAdapter: ProviderAdapter {
         regionObservation = region
         catalogObservation = catalogID
         self.now = now
+        self.diagnostics = diagnostics
+        self.diagnosticCLIVersion = diagnosticCLIVersion
+        self.diagnosticExecutableDigest = diagnosticExecutableDigest
+        self.diagnosticIdentity = diagnosticIdentity
         capabilities = ProviderCapabilities(
             contractVersion: MiniMaxDomainContract.quotaContractVersion,
             loginMethod: .oauth,
@@ -688,7 +701,7 @@ public actor MiniMaxProviderAdapter: ProviderAdapter {
             diagnosticCode: "minimax.adapter.safe_snapshot",
             safeFields: [
                 "adapter": MiniMaxDomainContract.adapterID,
-                "cliVersion": cliVersionObservation.provenanceValue,
+                "cliVersion": latestDiagnosticVersion ?? diagnosticCLIVersion ?? cliVersionObservation.provenanceValue,
                 "errorClass": lastErrorClass,
                 "schema": "\(MiniMaxDomainContract.schemaVersion):\(schemaState)"
             ]
@@ -719,15 +732,22 @@ public actor MiniMaxProviderAdapter: ProviderAdapter {
         guard executableURL.isFileURL, executableURL.path.hasPrefix("/") else {
             return .failure(record(executableFailure, errorClass: "invalid_executable_url"))
         }
+        let attemptIdentity = diagnosticIdentity?() ?? (version: diagnosticCLIVersion, digest: diagnosticExecutableDigest)
+        latestDiagnosticVersion = attemptIdentity.version
+        let attemptID = UUID()
+        let started = DispatchTime.now().uptimeNanoseconds
         let request = ChildProcessRequest(
             executableURL: executableURL,
             arguments: ["quota", "show", "--output", "json"],
             environment: environment,
             standardInput: nil,
-            limits: limits
+            limits: limits,
+            nonZeroExitPolicy: .returnBoundedOutput
         )
         switch await processClient.run(request) {
         case let .failure(failure):
+            await captureDiagnostic(stage: .execution, reason: .processFailure, attemptID: attemptID,
+                                    started: started, identity: attemptIdentity, failure: failure.code)
             let safeFailure = ProviderFailure(
                 code: failure.code,
                 retryClass: failure.retryClass,
@@ -738,9 +758,13 @@ public actor MiniMaxProviderAdapter: ProviderAdapter {
             return .failure(record(safeFailure, errorClass: failure.code.rawValue))
         case let .success(output):
             guard case .exited(code: 0) = output.termination else {
+                await captureDiagnostic(stage: .execution, reason: .processFailure, attemptID: attemptID,
+                                        started: started, identity: attemptIdentity, output: output, failure: .processFailed)
                 return .failure(record(processFailure, errorClass: "nonzero_exit"))
             }
             guard !output.standardOutput.isEmpty else {
+                await captureDiagnostic(stage: .json, reason: .emptyOutput, attemptID: attemptID,
+                                        started: started, identity: attemptIdentity, output: output, failure: .sessionEOF)
                 schemaState = "empty"
                 return .failure(record(emptyOutputFailure, errorClass: "empty_output"))
             }
@@ -758,12 +782,85 @@ public actor MiniMaxProviderAdapter: ProviderAdapter {
                         fetchedAt: now()
                     )
                 )
+                await captureQuotaDiagnostics(snapshot, attemptID: attemptID, started: started, identity: attemptIdentity, output: output)
                 schemaState = snapshot.effectiveCompleteness == .completeSuccess ? "valid" : "partial"
                 return .success(snapshot)
             } catch {
+                let parseFailure = error as? ParsedMiniMaxParsingFailure
+                await captureDiagnostic(stage: .json, reason: Self.diagnosticReason(parseFailure),
+                                        attemptID: attemptID, started: started, identity: attemptIdentity, output: output,
+                                        failure: .schemaMismatch, fieldPath: parseFailure?.codingPath)
                 schemaState = "invalid"
                 return .failure(record(schemaFailure, errorClass: "schema_mismatch"))
             }
+        }
+    }
+
+    private static func diagnosticReason(_ failure: ParsedMiniMaxParsingFailure?) -> ProviderDiagnosticEvent.Reason {
+        switch failure?.code {
+        case .missingRequiredField: .missingField
+        case .invalidFieldType: .invalidType
+        case .emptyInput: .emptyOutput
+        default: .invalidJSON
+        }
+    }
+
+    private func captureDiagnostic(
+        stage: ProviderDiagnosticEvent.Stage, reason: ProviderDiagnosticEvent.Reason,
+        attemptID: UUID, started: UInt64, identity: (version: String?, digest: String?)? = nil, output: ChildProcessOutput? = nil,
+        failure: FailureCode? = nil, fieldPath: String? = nil, model: String? = nil,
+        window: String? = nil, values: [String: Double] = [:]
+    ) async {
+        guard let diagnostics else { return }
+        let exitCode: Int32?
+        if let output, case let .exited(code) = output.termination { exitCode = code } else { exitCode = nil }
+        await diagnostics.record(ProviderDiagnosticEvent(
+            providerID: .miniMax, stage: stage, reason: reason, attemptID: attemptID, timestamp: now(),
+            failureCode: failure, cliVersion: identity?.version ?? diagnosticCLIVersion,
+            executableSHA256: identity?.digest ?? diagnosticExecutableDigest, exitCode: exitCode,
+            durationMilliseconds: Int((DispatchTime.now().uptimeNanoseconds - started) / 1_000_000),
+            stdoutBytes: output?.standardOutput.count, stderrBytes: output?.redactedStandardError.count,
+            fieldPath: fieldPath, model: model, window: window, values: values
+        ))
+    }
+
+    private func captureQuotaDiagnostics(_ snapshot: ParsedMiniMaxQuotaSnapshot,
+        attemptID: UUID, started: UInt64, identity: (version: String?, digest: String?), output: ChildProcessOutput) async {
+        if snapshot.baseStatusCode != 0 {
+            await captureDiagnostic(stage: .quota, reason: .baseStatus, attemptID: attemptID,
+                started: started, identity: identity, output: output, values: ["status_code": Double(snapshot.baseStatusCode)])
+        }
+        for failure in snapshot.parsingFailures.prefix(4) {
+            await captureDiagnostic(stage: .json, reason: Self.diagnosticReason(failure), attemptID: attemptID,
+                started: started, identity: identity, output: output, failure: .schemaMismatch, fieldPath: failure.codingPath)
+        }
+        if snapshot.droppedRowCount > 0 || snapshot.duplicateRowCount > 0 {
+            await captureDiagnostic(stage: .quota, reason: .partialRows, attemptID: attemptID,
+                started: started, identity: identity, output: output, failure: .schemaMismatch,
+                values: ["dropped_rows": Double(snapshot.droppedRowCount), "duplicate_rows": Double(snapshot.duplicateRowCount)])
+        }
+        for model in snapshot.models.lazy.filter({
+            $0.contractIssue(for: $0.current, isWeekly: false) != nil ||
+                $0.contractIssue(for: $0.weekly, isWeekly: true) != nil
+        }).prefix(4) {
+            for (window, weekly) in [(model.current, false), (model.weekly, true)] {
+                guard let issue = model.contractIssue(for: window, isWeekly: weekly) else { continue }
+                let reason: ProviderDiagnosticEvent.Reason
+                switch issue {
+                case .invalidSourceValue("remaining_percent"): reason = .invalidPercent
+                case .invalidSourceValue("usage_count"): reason = .invalidCount
+                case .unsupportedSemantics("minimax.window.status"): reason = .unsupportedStatus
+                case .unsupportedSemantics("minimax.model"): reason = .unsupportedModel
+                default: reason = .unsupportedBoost
+                }
+                await captureDiagnostic(stage: .quota, reason: reason, attemptID: attemptID,
+                    started: started, identity: identity, output: output, failure: .schemaMismatch,
+                    model: model.modelName, window: weekly ? "weekly" : "current", values: model.diagnosticValues)
+            }
+        }
+        if snapshot.baseStatusCode == 0, snapshot.effectiveCompleteness == .completeSuccess {
+            await captureDiagnostic(stage: .recovery, reason: .recovered, attemptID: attemptID,
+                                    started: started, identity: identity, output: output)
         }
     }
 

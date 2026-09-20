@@ -199,6 +199,9 @@ public struct Stage3ProviderProjection: Equatable, Identifiable, Sendable {
     public let activity: Stage3ProviderActivity
     public let partialDataState: Stage3PartialDataState?
     public let failureCode: FailureCode?
+    public let isQuotaValidationFailure: Bool
+    public let retryAt: Date?
+    public let automaticRetry: Bool?
     public let loginMethod: LoginMethod?
     public let authenticationExpiresAt: Date?
     public let hasOfficialDocumentation: Bool
@@ -215,6 +218,9 @@ public struct Stage3ProviderProjection: Equatable, Identifiable, Sendable {
         activity: Stage3ProviderActivity = .idle,
         partialDataState: Stage3PartialDataState? = nil,
         failureCode: FailureCode? = nil,
+        isQuotaValidationFailure: Bool = false,
+        retryAt: Date? = nil,
+        automaticRetry: Bool? = nil,
         loginMethod: LoginMethod? = nil,
         authenticationExpiresAt: Date? = nil,
         hasOfficialDocumentation: Bool = false,
@@ -230,6 +236,9 @@ public struct Stage3ProviderProjection: Equatable, Identifiable, Sendable {
         self.activity = activity
         self.partialDataState = partialDataState
         self.failureCode = failureCode
+        self.isQuotaValidationFailure = isQuotaValidationFailure
+        self.retryAt = retryAt
+        self.automaticRetry = automaticRetry
         self.loginMethod = loginMethod
         self.authenticationExpiresAt = authenticationExpiresAt
         self.hasOfficialDocumentation = hasOfficialDocumentation
@@ -248,6 +257,9 @@ public struct Stage3ProviderProjection: Equatable, Identifiable, Sendable {
             activity: activity,
             partialDataState: partialDataState,
             failureCode: failureCode,
+            isQuotaValidationFailure: isQuotaValidationFailure,
+            retryAt: retryAt,
+            automaticRetry: automaticRetry,
             loginMethod: loginMethod,
             authenticationExpiresAt: authenticationExpiresAt,
             hasOfficialDocumentation: hasOfficialDocumentation,

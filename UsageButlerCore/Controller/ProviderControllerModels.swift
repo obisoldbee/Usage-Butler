@@ -10,6 +10,7 @@ public enum ProviderControllerPhase: Equatable, Sendable, CaseIterable {
 }
 
 public struct ProviderProjection: Equatable, Sendable {
+    public let automaticRefresh: Bool
     public let revision: UInt64
     public let isEnabled: Bool
     public let phase: ProviderControllerPhase
@@ -19,8 +20,10 @@ public struct ProviderProjection: Equatable, Sendable {
         revision: UInt64,
         isEnabled: Bool,
         phase: ProviderControllerPhase,
-        state: ProviderState
+        state: ProviderState,
+        automaticRefresh: Bool = true
     ) {
+        self.automaticRefresh = automaticRefresh
         self.revision = revision
         self.isEnabled = isEnabled
         self.phase = phase

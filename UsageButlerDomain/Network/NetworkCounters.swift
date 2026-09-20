@@ -1,0 +1,202 @@
+import Foundation
+
+/// Semantics of a byte counter reported by a source. The aggregator must not
+/// mix counters of different semantics, sessions or epochs.
+public enum CounterSemantics: String, Equatable, Hashable, Sendable {
+    /// Monotonic count since the stated session+epoch started (e.g. nettop
+    /// per-process totals, getifaddrs boot totals).
+    case cumulativeSinceEpoch
+    /// Bytes observed within the reporting interval only.
+    case intervalDelta
+    /// Bytes settled since this capture session started watching the subject.
+    ///
+    /// Distinct from `cumulativeSinceEpoch`: the first reading of a source
+    /// counter is a baseline, not traffic, so a session total can be smaller
+    /// than the underlying counter. Aggregating flows that each belong to a
+    /// different source epoch is only legitimate under this label, because
+    /// every contribution is a delta observed inside one session.
+    case cumulativeWithinSession
+}
+
+/// Byte totals in both directions. Each direction is independently nullable:
+/// a direction that was never observed is `nil`, never zero. Zero is only
+/// reported when the source actually measured zero.
+public struct DirectionalBytes: Equatable, Sendable {
+    public let upload: UInt64?
+    public let download: UInt64?
+
+    public init(upload: UInt64?, download: UInt64?) {
+        self.upload = upload
+        self.download = download
+    }
+
+    /// `nil` when either direction is unknown; a total is never fabricated
+    /// from one observed direction.
+    public var total: UInt64? {
+        guard let upload, let download else { return nil }
+        return upload &+ download
+    }
+}
+
+/// Byte counters bound to their counting semantics and epoch.
+public struct NetworkByteCounters: Equatable, Sendable {
+    public let bytes: DirectionalBytes
+    public let semantics: CounterSemantics
+    public let epoch: CounterEpoch
+
+    public init(bytes: DirectionalBytes, semantics: CounterSemantics, epoch: CounterEpoch) {
+        self.bytes = bytes
+        self.semantics = semantics
+        self.epoch = epoch
+    }
+}
+
+/// A rate computed as byte delta divided by monotonic time delta. Wall-clock
+/// time is never used for rates, so sleep and wall-clock jumps cannot
+/// manufacture impossible rates.
+public struct NetworkRate: Equatable, Sendable {
+    public let uploadBytesPerSecond: Double?
+    public let downloadBytesPerSecond: Double?
+    /// Wall-clock time the rate window ended, for display and staleness.
+    public let asOf: Date
+    public let window: Duration
+
+    public init(
+        uploadBytesPerSecond: Double?,
+        downloadBytesPerSecond: Double?,
+        asOf: Date,
+        window: Duration
+    ) {
+        self.uploadBytesPerSecond = uploadBytesPerSecond.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        self.downloadBytesPerSecond = downloadBytesPerSecond.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        self.asOf = asOf
+        self.window = window
+    }
+}
+
+public enum NetworkInterfaceKind: String, Equatable, Hashable, Sendable {
+    case physical
+    case tunnel
+    case loopback
+    case bridge
+    case other
+}
+
+/// Bytes settled inside one capture session, starting from a baseline the
+/// aggregator actually observed.
+///
+/// This exists because the raw interface counter answers a different question
+/// than "how much has this session seen": a getifaddrs reading is a boot
+/// total, its start point cannot be verified from the reading, and widening it
+/// to 64 bits recovers nothing that already wrapped. Presenting it as a
+/// since-boot or since-monitoring total without this settlement would be an
+/// unproven claim (PRD §13.5).
+public struct SessionByteTotal: Equatable, Sendable {
+    public let bytes: DirectionalBytes
+    /// When the baseline was taken, i.e. the earliest moment this total can
+    /// speak for.
+    public let since: Date
+    public let sinceMonotonic: MonotonicInstant
+    /// False once a reset or a missing sample has broken the chain; the total
+    /// then covers only the surviving segment and must say so. Derived from
+    /// `breakReason` so a total can never claim to be both.
+    public let isContinuous: Bool
+    public let breakReason: String?
+
+    public init(
+        bytes: DirectionalBytes,
+        since: Date,
+        sinceMonotonic: MonotonicInstant,
+        breakReason: String? = nil
+    ) {
+        self.bytes = bytes
+        self.since = since
+        self.sinceMonotonic = sinceMonotonic
+        self.breakReason = breakReason
+        self.isContinuous = breakReason == nil
+    }
+}
+
+/// Per-interface counters. Interface counters answer "what crossed this
+/// interface" only; they are never summed with per-app counters, and a proxy
+/// TUN interface double-counts the physical one by design.
+public struct InterfaceCounters: Equatable, Sendable {
+    public let name: String
+    public let kind: NetworkInterfaceKind
+    public let counters: NetworkByteCounters
+    /// Wall-clock reading time of this sample.
+    public let asOf: Date
+    public let monotonicAsOf: MonotonicInstant
+    /// Derived by the aggregator, never by a source: what this capture session
+    /// has settled for this interface since its own baseline.
+    public let sessionTotal: SessionByteTotal?
+
+    public init(
+        name: String,
+        kind: NetworkInterfaceKind,
+        counters: NetworkByteCounters,
+        asOf: Date,
+        monotonicAsOf: MonotonicInstant,
+        sessionTotal: SessionByteTotal? = nil
+    ) {
+        self.name = name
+        self.kind = kind
+        self.counters = counters
+        self.asOf = asOf
+        self.monotonicAsOf = monotonicAsOf
+        self.sessionTotal = sessionTotal
+    }
+
+    /// Same reading with different byte values, for an aggregator that has to
+    /// invalidate an untrustworthy direction.
+    public func replacing(bytes: DirectionalBytes) -> InterfaceCounters {
+        InterfaceCounters(
+            name: name,
+            kind: kind,
+            counters: NetworkByteCounters(
+                bytes: bytes,
+                semantics: counters.semantics,
+                epoch: counters.epoch
+            ),
+            asOf: asOf,
+            monotonicAsOf: monotonicAsOf,
+            sessionTotal: sessionTotal
+        )
+    }
+
+    public func replacing(sessionTotal: SessionByteTotal?) -> InterfaceCounters {
+        InterfaceCounters(
+            name: name,
+            kind: kind,
+            counters: counters,
+            asOf: asOf,
+            monotonicAsOf: monotonicAsOf,
+            sessionTotal: sessionTotal
+        )
+    }
+}
+
+/// Per-app counters aggregated by the collector. Same nullability rules as
+/// `DirectionalBytes`; `connectionCount` is `nil` whenever flow events were
+/// lost and the count could be wrong — unknown is never displayed as zero.
+public struct AppNetworkCounters: Equatable, Sendable {
+    public let identity: AppIdentity
+    public let counters: NetworkByteCounters
+    public let activeConnectionCount: UInt64?
+    public let rate: NetworkRate?
+    public let lastActivity: Date?
+
+    public init(
+        identity: AppIdentity,
+        counters: NetworkByteCounters,
+        activeConnectionCount: UInt64?,
+        rate: NetworkRate?,
+        lastActivity: Date?
+    ) {
+        self.identity = identity
+        self.counters = counters
+        self.activeConnectionCount = activeConnectionCount
+        self.rate = rate
+        self.lastActivity = lastActivity
+    }
+}

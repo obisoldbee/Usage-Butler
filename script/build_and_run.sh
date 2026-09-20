@@ -2,15 +2,15 @@
 set -euo pipefail
 
 if (( $# > 1 )); then
-  echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+  echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--panel]" >&2
   exit 2
 fi
 
 MODE="${1:-run}"
 case "$MODE" in
-  run|--debug|debug|--logs|logs|--telemetry|telemetry|--verify|verify) ;;
+  run|--debug|debug|--logs|logs|--telemetry|telemetry|--verify|verify|--panel) ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--panel]" >&2
     exit 2
     ;;
 esac
@@ -151,6 +151,10 @@ case "$MODE" in
   --telemetry|telemetry)
     open_app
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
+    ;;
+  --panel)
+    /usr/bin/open -n "$APP_BUNDLE" --stdout "$SOURCE_ROOT/.build/panel-validation.stdout.log" --stderr "$SOURCE_ROOT/.build/panel-validation.stderr.log" --args --show-panel-for-validation
+    verify_process
     ;;
   --verify|verify)
     open_app

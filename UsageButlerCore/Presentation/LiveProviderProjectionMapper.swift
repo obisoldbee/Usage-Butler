@@ -10,24 +10,27 @@ public enum LiveProviderProjectionMapper {
     public static func map(
         _ projection: ProviderProjection,
         now: Date,
-        isProductEnabled: ((ProviderID, String) -> Bool)? = nil
+        isProductEnabled: ((ProviderID, String) -> Bool)? = nil,
+        monotonicNow: MonotonicInstant? = nil
     ) -> Stage3ProviderProjection? {
         guard projection.isEnabled else { return nil }
         return map(
             projection.state,
             phase: projection.phase,
             now: now,
-            isProductEnabled: isProductEnabled
+            isProductEnabled: isProductEnabled,
+            monotonicNow: monotonicNow, automaticRetry: projection.automaticRefresh
         )
     }
 
     public static func map(
         _ projections: [ProviderProjection],
         now: Date,
-        isProductEnabled: ((ProviderID, String) -> Bool)? = nil
+        isProductEnabled: ((ProviderID, String) -> Bool)? = nil,
+        monotonicNow: MonotonicInstant? = nil
     ) -> [Stage3ProviderProjection] {
         projections
-            .compactMap { map($0, now: now, isProductEnabled: isProductEnabled) }
+            .compactMap { map($0, now: now, isProductEnabled: isProductEnabled, monotonicNow: monotonicNow) }
             .sorted { $0.id.canonicalOrder < $1.id.canonicalOrder }
     }
 
@@ -36,16 +39,20 @@ public enum LiveProviderProjectionMapper {
     public static func map(
         _ state: ProviderState,
         now: Date,
-        isProductEnabled: ((ProviderID, String) -> Bool)? = nil
+        isProductEnabled: ((ProviderID, String) -> Bool)? = nil,
+        monotonicNow: MonotonicInstant? = nil,
+        automaticRetry: Bool? = nil
     ) -> Stage3ProviderProjection {
-        map(state, phase: nil, now: now, isProductEnabled: isProductEnabled)
+        map(state, phase: nil, now: now, isProductEnabled: isProductEnabled, monotonicNow: monotonicNow, automaticRetry: automaticRetry)
     }
 
     private static func map(
         _ state: ProviderState,
         phase: ProviderControllerPhase?,
         now: Date,
-        isProductEnabled: ((ProviderID, String) -> Bool)? = nil
+        isProductEnabled: ((ProviderID, String) -> Bool)? = nil,
+        monotonicNow: MonotonicInstant? = nil,
+        automaticRetry: Bool? = nil
     ) -> Stage3ProviderProjection {
         let quota = state.lastGood
         let visibleProducts = quota?.products.filter { product in
@@ -74,6 +81,11 @@ public enum LiveProviderProjectionMapper {
                 resetEntitlements: quota?.resetEntitlements ?? []
             ),
             failureCode: displayFailureCode(for: state),
+            isQuotaValidationFailure: state.scopedFailures.current?.failure.userMessageKey == "provider.failure.partial-schema",
+            retryAt: automaticRetry == true ? monotonicNow.flatMap {
+                ProviderRetryTiming.date(for: state.refresh.gate, reading: ClockReading(wallTime: now, monotonicTime: $0))
+            } : nil,
+            automaticRetry: automaticRetry,
             loginMethod: state.capabilities.loginMethod,
             authenticationExpiresAt: authenticationExpiresAt(state.authentication),
             hasOfficialDocumentation: state.capabilities.hasOfficialDocumentation,

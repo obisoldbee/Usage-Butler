@@ -46,12 +46,13 @@ public enum MiniMaxQuotaParser {
             baseStatusCode: envelope.baseResponse.statusCode,
             models: models,
             droppedRowCount: droppedRowCount,
+            parsingFailures: envelope.modelRemains.compactMap(\.failure),
             duplicateRowCount: duplicateRowCount,
             context: context
         )
     }
 
-    private static func mapDecodingError(_ error: Error) -> ParsedMiniMaxParsingFailure {
+    static func mapDecodingError(_ error: Error) -> ParsedMiniMaxParsingFailure {
         switch error {
         case let DecodingError.keyNotFound(key, context):
             return ParsedMiniMaxParsingFailure(
@@ -100,9 +101,11 @@ private struct MiniMaxBaseResponseDTO: Decodable {
 
 private struct MiniMaxRowAttempt: Decodable {
     let value: MiniMaxModelRemainDTO?
+    let failure: ParsedMiniMaxParsingFailure?
 
     init(from decoder: any Decoder) throws {
-        value = try? MiniMaxModelRemainDTO(from: decoder)
+        do { value = try MiniMaxModelRemainDTO(from: decoder); failure = nil }
+        catch { value = nil; failure = MiniMaxQuotaParser.mapDecodingError(error) }
     }
 }
 

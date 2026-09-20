@@ -5,6 +5,16 @@ public enum ProviderDefaults {
     public static let initiallyEnabled: Set<ProviderID> = Set(ProviderID.allCases)
 }
 
+/// UserDefaults keys for network preferences. The store
+/// (`UserDefaultsNetworkSettingsStore` in Infrastructure) and the settings UI
+/// both reference these constants so the key strings exist exactly once.
+public enum NetworkPreferenceKey {
+    public static let collectionEnabled = "usageButler.network.v1.collectionEnabled"
+    public static let retention = "usageButler.network.v1.historyRetention"
+    public static let uploadAlertThresholdBytes = "usageButler.network.v1.uploadAlertThresholdBytes"
+    public static let notificationsEnabled = "usageButler.network.v1.notificationsEnabled"
+}
+
 public enum ProviderPreferenceKey {
     public static let openAIEnabled = "usageButler.settings.v1.providers.openai.enabled"
     public static let miniMaxEnabled = "usageButler.settings.v1.providers.minimax.enabled"

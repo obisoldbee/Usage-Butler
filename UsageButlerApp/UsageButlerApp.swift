@@ -5,15 +5,26 @@ import UsageButlerUI
 @MainActor
 final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
     weak var runtime: AppRuntime?
-    private var terminationDeadlineTask: Task<Void, Never>?
+    private var terminationDeadline: DispatchWorkItem?
     private var hasRepliedToTermination = false
     private var panelController: PanelPresentationController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        if CommandLine.arguments.contains("--show-panel-for-validation") {
+            NSLog("panel_validation app_did_finish runtime=%d", runtime != nil ? 1 : 0)
+        }
+        #endif
         guard let runtime else { return }
         let controller = PanelPresentationController(runtime: runtime)
         runtime.panelController = controller
         panelController = controller
+        #if DEBUG
+        if CommandLine.arguments.contains("--show-panel-for-validation") {
+            DispatchQueue.main.async { controller.togglePanel() }
+        }
+        NetworkCurveValidation.startIfRequested(runtime: runtime, panel: controller)
+        #endif
     }
 
     func applicationShouldTerminate(
@@ -22,25 +33,33 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
         guard let runtime else { return .terminateNow }
         guard !runtime.shutdownComplete else { return .terminateNow }
         guard !hasRepliedToTermination else { return .terminateNow }
-        guard terminationDeadlineTask == nil else { return .terminateLater }
+        guard terminationDeadline == nil else { return .terminateLater }
 
         runtime.prepareForTermination { [weak self, weak sender] in
             guard let self, let sender else { return }
             replyToTerminationOnce(sender)
         }
-        terminationDeadlineTask = Task { @MainActor [weak self, weak sender] in
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled, let self, let sender else { return }
-            replyToTerminationOnce(sender)
+        // A dispatch item rather than a Task. `terminate:` can be reached from
+        // inside a main-actor task that has not returned yet; AppKit then spins
+        // a nested event loop that keeps running the main queue but never
+        // resumes that task, and the deadline — the only guarantee that a reply
+        // is ever sent — would sit behind the thing it is meant to escape.
+        let deadline = DispatchWorkItem { [weak self, weak sender] in
+            MainActor.assumeIsolated {
+                guard let self, let sender else { return }
+                self.replyToTerminationOnce(sender)
+            }
         }
+        terminationDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: deadline)
         return .terminateLater
     }
 
     private func replyToTerminationOnce(_ sender: NSApplication) {
         guard !hasRepliedToTermination else { return }
         hasRepliedToTermination = true
-        terminationDeadlineTask?.cancel()
-        terminationDeadlineTask = nil
+        terminationDeadline?.cancel()
+        terminationDeadline = nil
         sender.reply(toApplicationShouldTerminate: true)
     }
 }

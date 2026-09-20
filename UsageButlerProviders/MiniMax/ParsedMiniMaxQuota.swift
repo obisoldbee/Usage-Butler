@@ -123,6 +123,7 @@ public struct ParsedMiniMaxQuotaSnapshot: Equatable, Sendable {
     public let baseStatusCode: Int
     public let models: [ParsedMiniMaxModelQuota]
     public let droppedRowCount: Int
+    public let parsingFailures: [ParsedMiniMaxParsingFailure]
     public let duplicateRowCount: Int
     public let context: ParsedMiniMaxParsingContext
 
@@ -130,12 +131,14 @@ public struct ParsedMiniMaxQuotaSnapshot: Equatable, Sendable {
         baseStatusCode: Int,
         models: [ParsedMiniMaxModelQuota],
         droppedRowCount: Int,
+        parsingFailures: [ParsedMiniMaxParsingFailure] = [],
         duplicateRowCount: Int,
         context: ParsedMiniMaxParsingContext
     ) {
         self.baseStatusCode = baseStatusCode
         self.models = models
         self.droppedRowCount = droppedRowCount
+        self.parsingFailures = parsingFailures
         self.duplicateRowCount = duplicateRowCount
         self.context = context
     }

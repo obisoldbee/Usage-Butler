@@ -6,6 +6,7 @@ import UsageButlerDomain
 public enum MenuPage: String, CaseIterable, Identifiable {
     case quota
     case memory
+    case network
 
     public var id: String { rawValue }
 
@@ -13,6 +14,7 @@ public enum MenuPage: String, CaseIterable, Identifiable {
         switch self {
         case .quota: String(localized: "额度")
         case .memory: String(localized: "内存")
+        case .network: String(localized: "网络")
         }
     }
 }
@@ -37,6 +39,38 @@ public enum MemoryRange: String, CaseIterable, Identifiable {
     }
 }
 
+/// Trend window for the network page. Same steps as the memory range but a
+/// different default (1 h per PRD NET-02), so it is its own type.
+public enum NetworkTrendRange: String, CaseIterable, Identifiable {
+    case oneMinute = "1m"
+    case tenMinutes = "10m"
+    case thirtyMinutes = "30m"
+    case oneHour = "1h"
+    case twoHours = "2h"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .oneMinute: String(localized: "1 分钟")
+        case .tenMinutes: String(localized: "10 分钟")
+        case .thirtyMinutes: String(localized: "30 分钟")
+        case .oneHour: String(localized: "1 小时")
+        case .twoHours: String(localized: "2 小时")
+        }
+    }
+
+    public var duration: TimeInterval {
+        switch self {
+        case .oneMinute: 60
+        case .tenMinutes: 600
+        case .thirtyMinutes: 1_800
+        case .oneHour: 3_600
+        case .twoHours: 7_200
+        }
+    }
+}
+
 public struct SafeDiagnosticField: Equatable, Identifiable, Sendable {
     public let key: String
     public let value: String
@@ -48,11 +82,15 @@ public struct SafeProviderDiagnosticPresentation: Equatable, Identifiable, Senda
     public let providerID: ProviderID
     public let diagnosticCode: String
     public let safeFields: [SafeDiagnosticField]
+    public let events: [ProviderDiagnosticEvent]
+    public let journalAvailable: Bool
 
     public var id: ProviderID { providerID }
 
     fileprivate init(snapshot: SafeProviderDiagnostic) {
         providerID = snapshot.providerID
+        events = Array(snapshot.events.suffix(20).reversed())
+        journalAvailable = snapshot.journalAvailable
         diagnosticCode = Self.safeDiagnosticCode(snapshot.diagnosticCode)
         let allowedKeys = Self.allowedSafeFieldKeys(for: snapshot.providerID)
         safeFields = snapshot.safeFields
@@ -198,9 +236,21 @@ public final class MenuPanelViewModel: ObservableObject {
         didSet {
             guard selectedPage != oldValue else { return }
             onMemoryPageVisibilityChanged?(selectedPage == .memory)
+            onNetworkPageVisibilityChanged?(selectedPage == .network)
         }
     }
     @Published public var memoryRange: MemoryRange = .oneMinute
+    /// Trend window on the network page; defaults to 1 h per PRD NET-02.
+    @Published public var networkTrendRange: NetworkTrendRange = .oneHour
+    @Published public private(set) var networkSnapshot: NetworkSnapshot?
+    @Published public private(set) var networkRateHistory = NetworkRateHistoryBuffer()
+    /// Sticky user interface choice. A vanished interface stays selected and
+    /// renders unavailable; the caliber never switches silently (NET-02).
+    @Published public var userSelectedNetworkInterface: String?
+    /// The system's own answer about which network is connected. Supplied by
+    /// the runtime so the view model stays free of SystemConfiguration.
+    @Published public private(set) var networkSystemPath: NetworkSystemPath = .unreadable
+    public private(set) var networkSystemPathUpdatedAt: Date?
     @Published public private(set) var snapshot: Stage3AppProjection
     @Published public private(set) var settingsProviders: [Stage3ProviderProjection]
     @Published public private(set) var isManualRefreshInFlight = false
@@ -209,9 +259,11 @@ public final class MenuPanelViewModel: ObservableObject {
         LarkQuotaAlertChannelStatus = .notChecked
     @Published public private(set) var globalShortcutText: String?
 
-    /// Cycles the panel between 额度 and 内存 (Tab key inside the panel).
+    /// Cycles the panel across 额度 → 内存 → 网络 (Tab key inside the panel).
     public func cyclePage() {
-        selectedPage = selectedPage == .quota ? .memory : .quota
+        let pages = MenuPage.allCases
+        guard let index = pages.firstIndex(of: selectedPage) else { return }
+        selectedPage = pages[(index + 1) % pages.count]
     }
 
     private var onPanelPresented: (() -> Void)?
@@ -231,12 +283,15 @@ public final class MenuPanelViewModel: ObservableObject {
     private var onClearQuotaCache: (() async -> CacheClearFeedback)?
     private var onLoadSafeDiagnostics: (@MainActor () async -> SafeDiagnosticsLoadResult)?
     private var onMemoryPageVisibilityChanged: ((Bool) -> Void)?
+    private var onNetworkPageVisibilityChanged: ((Bool) -> Void)?
+    private var onSetNetworkCollectionEnabled: ((Bool) async -> Void)?
     private var onSetGlobalShortcut: ((String?) -> Void)?
     private var onLoadLarkQuotaAlertChannelStatus:
         (@MainActor () async -> LarkQuotaAlertChannelStatus)?
     #if USAGE_BUTLER_FIXTURES
     private var fixtureEnabledProviderIDs: Set<ProviderID>?
     private var fixtureDisabledProductIDs: [ProviderID: Set<String>] = [:]
+    private var fixtureNetworkCollecting = true
     #endif
 
     public init(
@@ -282,6 +337,11 @@ public final class MenuPanelViewModel: ObservableObject {
             memory: snapshot.memory
         )
         #endif
+        #if USAGE_BUTLER_FIXTURES
+        if isFixtureMode {
+            applyNetworkSnapshot(NetworkFixtureCatalog.snapshot(collecting: fixtureNetworkCollecting))
+        }
+        #endif
     }
 
     #if USAGE_BUTLER_FIXTURES
@@ -312,7 +372,9 @@ public final class MenuPanelViewModel: ObservableObject {
         onMemoryPageVisibilityChanged: @escaping (Bool) -> Void,
         onSetGlobalShortcut: ((String?) -> Void)? = nil,
         onLoadLarkQuotaAlertChannelStatus:
-            (@MainActor () async -> LarkQuotaAlertChannelStatus)? = nil
+            (@MainActor () async -> LarkQuotaAlertChannelStatus)? = nil,
+        onNetworkPageVisibilityChanged: ((Bool) -> Void)? = nil,
+        onSetNetworkCollectionEnabled: ((Bool) async -> Void)? = nil
     ) {
         self.onPanelPresented = onPanelPresented
         self.onManualRefresh = onManualRefresh
@@ -328,7 +390,10 @@ public final class MenuPanelViewModel: ObservableObject {
         self.onSetGlobalShortcut = onSetGlobalShortcut
         self.onLoadLarkQuotaAlertChannelStatus =
             onLoadLarkQuotaAlertChannelStatus
+        self.onNetworkPageVisibilityChanged = onNetworkPageVisibilityChanged
+        self.onSetNetworkCollectionEnabled = onSetNetworkCollectionEnabled
         onMemoryPageVisibilityChanged(selectedPage == .memory)
+        onNetworkPageVisibilityChanged?(selectedPage == .network)
     }
 
     /// Persists (nil clears) the global panel shortcut.
@@ -524,7 +589,9 @@ public final class MenuPanelViewModel: ObservableObject {
     ) {
         let settingsProjection = LiveProviderProjectionMapper.map(
             projection.state,
-            now: now
+            now: now,
+            monotonicNow: .init(nanoseconds: DispatchTime.now().uptimeNanoseconds),
+            automaticRetry: projection.automaticRefresh
         )
         settingsProviders = replacing(
             provider: settingsProjection,
@@ -537,7 +604,8 @@ public final class MenuPanelViewModel: ObservableObject {
             now: now,
             isProductEnabled: { [weak self] providerID, productID in
                 self?.isProductEnabled(providerID: providerID, productID: productID) ?? true
-            }
+            },
+            monotonicNow: .init(nanoseconds: DispatchTime.now().uptimeNanoseconds)
         ) {
             visibleProviders = replacing(
                 provider: visibleProjection,
@@ -551,6 +619,145 @@ public final class MenuPanelViewModel: ObservableObject {
 
     public func applyMemoryProjection(_ memory: Stage3MemoryProjection) {
         replaceSnapshot(memory: memory)
+    }
+
+    // MARK: - Network page
+
+    /// Whether collection is running, derived from the snapshot's state —
+    /// never from the settings toggle alone.
+    public var networkCollectionEnabled: Bool {
+        guard let networkSnapshot else { return false }
+        return networkSnapshot.collectionState != .stopped
+    }
+
+    /// See `NetworkStatusRules`: the clock is injected there so the rules are
+    /// assertable without waiting.
+    public var networkStatusIsHealthy: Bool { NetworkStatusRules.isHealthy(networkSnapshot) }
+
+    public var networkRatesAreStale: Bool { NetworkStatusRules.ratesAreStale(networkSnapshot, now: Date()) }
+
+    public var networkCoverageNotice: String? { NetworkStatusRules.coverageNotice(networkSnapshot) }
+
+    /// Where the numbers on this page come from, resolved from the system's own
+    /// connected-network state rather than from an interface name or sort order.
+    public var networkObservationResolution: NetworkObservationResolution {
+        NetworkObservationPointResolver.resolve(
+            path: networkSystemPath,
+            manualSelection: userSelectedNetworkInterface,
+            observedInterfaces: Set(networkSnapshot.map { Array($0.interfaces.keys) } ?? [])
+        )
+    }
+
+    /// Nil in every unresolved case, so the page says "not identified" instead
+    /// of quietly measuring a different network.
+    public var resolvedNetworkInterfaceName: String? {
+        NetworkObservationPointResolver.measurableInterface(in: networkObservationResolution)
+    }
+
+    /// True while the observation point follows the system's active network.
+    public var networkObservationIsAutomatic: Bool { userSelectedNetworkInterface == nil }
+
+    /// "Wi-Fi（en0）" when the system published a name, the bare BSD name when
+    /// it did not, and never a friendly label that was inferred from a prefix.
+    public var networkObservationLabel: String {
+        guard case let .resolved(point) = networkObservationResolution else { return "" }
+        guard let display = point.displayName else { return point.interfaceName }
+        return "\(display)（\(point.interfaceName)）"
+    }
+
+    /// Grouped interface list for the advanced picker; the default view never
+    /// dumps every internal interface on the user.
+    public var networkAdvancedInterfaceGroups: [NetworkInterfaceGroup] {
+        NetworkObservationPointResolver.advancedGroups(
+            interfaces: networkSnapshot?.interfaces ?? [:]
+        )
+    }
+
+    /// Picker value: the empty string means "follow the system's active
+    /// network", which is also what a fresh install does.
+    public static let automaticNetworkObservationValue = ""
+
+    public var networkObservationSelection: String {
+        get { userSelectedNetworkInterface ?? Self.automaticNetworkObservationValue }
+        set { userSelectedNetworkInterface = newValue.isEmpty ? nil : newValue }
+    }
+
+    /// Where the current observation point came from, stated plainly so the
+    /// page never implies it measured something it did not.
+    public var networkObservationSourceText: String {
+        switch networkObservationResolution {
+        case let .resolved(point):
+            switch point.resolution {
+            case .systemConfirmed:
+                return String(localized: "自动 · 跟随系统当前连接的网络")
+            case .manuallySelected:
+                return String(localized: "手动选择 · 切换网络时不会跟随")
+            }
+        case let .manualUnavailable(name):
+            return String(localized: "手动选择的 \(name) 已消失 · 数值显示为未知")
+        case let .notSampled(name):
+            return String(localized: "自动 · 系统连接的是 \(name)，尚未采集到它的样本")
+        case .noActiveNetwork:
+            return String(localized: "自动 · 系统当前没有活动网络")
+        case .systemStateUnreadable:
+            return String(localized: "无法读取系统网络状态 · 不猜测接口")
+        }
+    }
+
+    public func setNetworkObservationAutomatic() {
+        userSelectedNetworkInterface = nil
+    }
+
+    /// Only a readable answer replaces the previous one. "Could not read" is
+    /// not evidence that the network changed, and treating it as such would
+    /// blank the page on a transient failure.
+    public func setNetworkSystemPath(_ path: NetworkSystemPath, at date: Date = Date()) {
+        guard path.isReadable else { return }
+        networkSystemPath = path
+        networkSystemPathUpdatedAt = date
+    }
+
+    /// The exact points the trend chart will draw for one window. Exposed so
+    /// acceptance can compare what was rendered against what was sampled; the
+    /// view must not keep this rule to itself.
+    public func networkTrendProjection(
+        now: Date,
+        window: TimeInterval
+    ) -> NetworkChartProjection {
+        guard let name = resolvedNetworkInterfaceName else { return .empty }
+        return NetworkChartProjector.project(
+            networkRateHistory.series(for: name),
+            interface: name,
+            now: now,
+            window: window,
+            contract: NetworkChartSamplingContract()
+        )
+    }
+
+    /// Applies one complete replacement snapshot: the projection replaces the
+    /// previous one wholesale, rate history accumulates per interface, and
+    /// vanished interfaces are pruned from the trend buffer.
+    public func applyNetworkSnapshot(_ snapshot: NetworkSnapshot) {
+        networkSnapshot = snapshot
+        #if USAGE_BUTLER_FIXTURES
+        if isFixtureMode {
+            networkSystemPath = NetworkFixtureCatalog.systemPath
+        }
+        #endif
+        networkRateHistory.record(snapshot)
+        networkRateHistory.prune(keeping: Set(snapshot.interfaces.keys))
+    }
+
+    public func setNetworkCollectionEnabled(_ enabled: Bool) {
+        #if USAGE_BUTLER_FIXTURES
+        if isFixtureMode {
+            fixtureNetworkCollecting = enabled
+            applyNetworkSnapshot(NetworkFixtureCatalog.snapshot(collecting: enabled))
+            return
+        }
+        #endif
+        guard let onSetNetworkCollectionEnabled else { return }
+        Task { await onSetNetworkCollectionEnabled(enabled) }
     }
 
     #if USAGE_BUTLER_FIXTURES
@@ -568,6 +775,7 @@ public final class MenuPanelViewModel: ObservableObject {
             },
             memory: refreshed.memory
         )
+        applyNetworkSnapshot(NetworkFixtureCatalog.snapshot(now: now, collecting: fixtureNetworkCollecting))
     }
     #endif
 

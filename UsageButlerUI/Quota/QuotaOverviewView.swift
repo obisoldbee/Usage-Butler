@@ -439,6 +439,12 @@ private struct ProviderQuotaStateRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if provider.failureCode != nil {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(retryText(now: context.date))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Spacer()
@@ -495,7 +501,9 @@ private struct ProviderQuotaStateRow: View {
         if let failureCode = ProviderStatusPriority.visibleFailure(
             for: provider
         ) {
-            return ProviderPresentation.failure(failureCode).title
+            return provider.isQuotaValidationFailure
+                ? String(localized: "部分额度数据异常")
+                : ProviderPresentation.failure(failureCode).title
         }
         if ProviderStatusPriority.visiblePartial(for: provider) != nil {
             return String(localized: "部分信息未更新")
@@ -516,6 +524,15 @@ private struct ProviderQuotaStateRow: View {
         case .unavailable:
             return String(localized: "暂时无法获取额度")
         }
+    }
+
+    private func retryText(now: Date) -> String {
+        if provider.activity.isInFlight { return String(localized: "正在重试…") }
+        if provider.automaticRetry == false { return String(localized: "仅手动刷新 · 详情见设置中的脱敏诊断") }
+        if let retryAt = provider.retryAt, retryAt > now {
+            return String(localized: "将于 \(retryAt.formatted(date: .omitted, time: .standard)) 自动重试")
+        }
+        return String(localized: "等待重新检测 · 详情见设置中的脱敏诊断")
     }
 
     private var detail: String? {

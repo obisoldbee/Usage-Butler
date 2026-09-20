@@ -61,7 +61,7 @@ public enum ProviderPresentation {
         case .sessionEOF:
             (String(localized: "连接意外结束"), "bolt.horizontal.circle", .orange)
         case .schemaMismatch, .protocolViolation:
-            (String(localized: "CLI 输出解析失败"), "doc.badge.gearshape", .orange)
+            (String(localized: "额度输出格式无法识别"), "doc.badge.gearshape", .orange)
         case .permissionDenied:
             (String(localized: "无法访问 CLI"), "lock.trianglebadge.exclamationmark", .red)
         case .cacheCorrupt, .cacheUnavailable:

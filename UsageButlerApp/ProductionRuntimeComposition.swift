@@ -5,12 +5,17 @@ import UsageButlerInfrastructure
 import UsageButlerProviders
 
 struct ProductionRuntimeComposition {
+    let diagnosticJournal: ProviderDiagnosticJournal
     let controllers: [ProviderID: ProviderController]
     let adapters: [any ProviderAdapter]
     let caches: [any ProviderQuotaCache]
     let schedulers: [RefreshScheduler]
     let initialProviderProjections: [ProviderProjection]
     let memoryController: MemorySamplingController
+    let networkCollector: NetworkCollector
+    /// Answers which network the system itself considers active, so the page
+    /// never promotes an interface name into a claim about the connection.
+    let networkPathReader: any NetworkPathProviding
     let memoryHistoryStore: (any MemoryHistoryStore)?
     let quotaAlertService: QuotaAlertService?
     let larkProcessClient: OneShotChildProcessClient?
@@ -28,6 +33,9 @@ enum ProductionRuntimeFactory {
         defaults: UserDefaults,
         environment: [String: String]
     ) throws -> ProductionRuntimeComposition {
+        let journalDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Usage-Butler/diagnostics", isDirectory: true)
+        let diagnosticJournal = ProviderDiagnosticJournal(directory: journalDirectory)
         let now = Date()
         let homeDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
         let pathEntries = runtimePathEntries(
@@ -56,6 +64,7 @@ enum ProductionRuntimeFactory {
             )
         )
         let miniMaxAdapter = makeMiniMaxAdapter(
+            diagnostics: diagnosticJournal,
             locator: locator,
             pathEntries: pathEntries,
             childEnvironment: childEnvironment,
@@ -137,6 +146,20 @@ enum ProductionRuntimeFactory {
             initialPolicy: .other
         )
 
+        let networkCollector = NetworkCollector(
+            clock: clock,
+            settingsStore: UserDefaultsNetworkSettingsStore(defaults: defaults),
+            coverageProfile: .interfaceCountersOnly,
+            idleCapabilities: GetifaddrsNetworkSource.interfaceOnlyCapabilities,
+            makeSource: { sessionID in
+                GetifaddrsNetworkSource(
+                    clock: clock,
+                    reader: GetifaddrsInterfaceCountersReader(),
+                    sessionID: sessionID
+                )
+            }
+        )
+
         let (
             quotaAlertService,
             larkProcessClient,
@@ -149,6 +172,7 @@ enum ProductionRuntimeFactory {
         )
 
         return ProductionRuntimeComposition(
+            diagnosticJournal: diagnosticJournal,
             controllers: controllers,
             adapters: adapters,
             caches: caches,
@@ -157,6 +181,8 @@ enum ProductionRuntimeFactory {
                 $0.state.id.canonicalOrder < $1.state.id.canonicalOrder
             },
             memoryController: memoryController,
+            networkCollector: networkCollector,
+            networkPathReader: SystemConfigurationNetworkPathReader(),
             memoryHistoryStore: memoryHistoryStore(),
             quotaAlertService: quotaAlertService,
             larkProcessClient: larkProcessClient,
@@ -277,6 +303,7 @@ enum ProductionRuntimeFactory {
     }
 
     private static func makeMiniMaxAdapter(
+        diagnostics: any ProviderDiagnosticRecording,
         locator: CLIExecutableLocator,
         pathEntries: [String],
         childEnvironment: MinimalChildEnvironment?,
@@ -312,7 +339,9 @@ enum ProductionRuntimeFactory {
             environment: childEnvironment.variables,
             cliVersion: .unverified,
             region: .unverified,
-            catalogID: .unverified
+            catalogID: .unverified,
+            diagnostics: diagnostics,
+            diagnosticIdentity: { DiagnosticCLIIdentity.read(executable: executable.resolvedFileURL) }
         )
     }
 

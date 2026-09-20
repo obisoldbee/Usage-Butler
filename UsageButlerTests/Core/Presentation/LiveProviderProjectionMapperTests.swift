@@ -880,6 +880,25 @@ final class LiveProviderProjectionMapperTests: XCTestCase {
         XCTAssertEqual(projection.activity, .refreshing)
     }
 
+    func testPartialQuotaFailureShowsTypedReasonAndRealRetryDeadline() throws {
+        let failure = ProviderFailure(code: .schemaMismatch, retryClass: .backoff,
+            userMessageKey: "provider.failure.partial-schema", diagnosticCode: "minimax.adapter.response.partial_schema", recovery: .retry)
+        var state = providerState(providerID: .miniMax, quota: nil, failure: failure)
+        state = ProviderReducer.reduce(state: state,
+            event: .gateChanged(.backoff(until: .init(nanoseconds: 160_000_000_000), attempt: 1)), now: fixedNow)
+        let automatic = ProviderProjection(revision: 1, isEnabled: true, phase: .running, state: state, automaticRefresh: true)
+        let visible = try XCTUnwrap(LiveProviderProjectionMapper.map(automatic, now: fixedNow,
+            monotonicNow: .init(nanoseconds: 100_000_000_000)))
+        XCTAssertTrue(visible.isQuotaValidationFailure)
+        XCTAssertEqual(visible.retryAt, fixedNow.addingTimeInterval(60))
+        XCTAssertEqual(visible.withProducts([]).retryAt, visible.retryAt)
+        let manual = ProviderProjection(revision: 2, isEnabled: true, phase: .running, state: state, automaticRefresh: false)
+        let manualView = try XCTUnwrap(LiveProviderProjectionMapper.map(manual, now: fixedNow,
+            monotonicNow: .init(nanoseconds: 100_000_000_000)))
+        XCTAssertNil(manualView.retryAt)
+        XCTAssertEqual(manualView.automaticRetry, false)
+    }
+
     private func providerState(
         providerID: ProviderID,
         quota: ProviderQuotaData?,

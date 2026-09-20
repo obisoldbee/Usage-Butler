@@ -71,7 +71,7 @@ final class MenuPanelRuntimeBridgeTests: XCTestCase {
         )
     }
 
-    func testCyclePageTogglesBetweenQuotaAndMemory() {
+    func testCyclePageRotatesThroughQuotaMemoryAndNetwork() {
         let model = makeModel(projections: [])
         var visibilityUpdates: [Bool] = []
         let cancellable = model.$selectedPage
@@ -83,8 +83,10 @@ final class MenuPanelRuntimeBridgeTests: XCTestCase {
         model.cyclePage()
         XCTAssertEqual(model.selectedPage, .memory)
         model.cyclePage()
+        XCTAssertEqual(model.selectedPage, .network)
+        model.cyclePage()
         XCTAssertEqual(model.selectedPage, .quota)
-        XCTAssertEqual(visibilityUpdates, [true, false])
+        XCTAssertEqual(visibilityUpdates, [true, false, false])
         _ = cancellable
     }
 

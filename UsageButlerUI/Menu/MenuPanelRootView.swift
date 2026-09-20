@@ -3,6 +3,7 @@ import UsageButlerCore
 import UsageButlerDomain
 
 public struct MenuPanelRootView: View {
+    @ObservedObject private var sizing: MenuPanelSizing
     @ObservedObject private var model: MenuPanelViewModel
     private let activityMonitorState: ActivityMonitorActionState
     private let onOpenActivityMonitor: () -> Void
@@ -12,8 +13,10 @@ public struct MenuPanelRootView: View {
         model: MenuPanelViewModel,
         activityMonitorState: ActivityMonitorActionState,
         onOpenActivityMonitor: @escaping () -> Void,
-        onOpenSettingsFallback: @escaping () -> Void
+        onOpenSettingsFallback: @escaping () -> Void,
+        sizing: MenuPanelSizing = MenuPanelSizing()
     ) {
+        self.sizing = sizing
         self.model = model
         self.activityMonitorState = activityMonitorState
         self.onOpenActivityMonitor = onOpenActivityMonitor
@@ -51,16 +54,38 @@ public struct MenuPanelRootView: View {
                             activityMonitorState: activityMonitorState,
                             onOpenActivityMonitor: onOpenActivityMonitor
                         )
+                    case .network:
+                        NetworkOverviewView(model: model)
                     }
                 }
                 .padding(16)
+                .frame(width: 540)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: PanelContentHeightKey.self,
+                        value: [model.selectedPage.rawValue: geometry.size.height])
+                })
             }
         }
-        .frame(width: 540, height: 760)
+        .frame(width: 540, height: sizing.height)
+        .onPreferenceChange(PanelContentHeightKey.self) { measurements in
+            for (page, height) in measurements {
+                sizing.measure(contentHeight: height, page: page, headerHeight: measuredHeaderHeight)
+            }
+        }
+        .onChange(of: model.selectedPage) { page in sizing.select(page: page.rawValue) }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
+            sizing.select(page: model.selectedPage.rawValue)
             model.panelPresented()
         }
+    }
+
+    private var measuredHeaderHeight: CGFloat {
+        #if USAGE_BUTLER_FIXTURES
+        if model.isFixtureMode { return 89 }
+        #endif
+        return 57
     }
 
     private var header: some View {
@@ -152,4 +177,11 @@ public struct MenuPanelRootView: View {
     }
     #endif
 
+}
+
+private struct PanelContentHeightKey: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
 }

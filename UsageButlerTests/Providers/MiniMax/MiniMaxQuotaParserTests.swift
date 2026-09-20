@@ -1,6 +1,7 @@
 import Foundation
 import UsageButlerCore
 import UsageButlerDomain
+import UsageButlerInfrastructure
 import XCTest
 @testable import UsageButlerProviders
 
@@ -1258,6 +1259,91 @@ final class MiniMaxQuotaParserTests: XCTestCase {
         """
     }
 
+    func testDiagnosticBoundSamplesFailingRowsInsteadOfFirstHealthyRows() async throws {
+        let healthy = videoRow(currentTotal: 3, currentStatus: 1, weeklyTotal: 21, weeklyStatus: 1)
+        let broken = videoRow(currentTotal: 3, currentStatus: 2, weeklyTotal: 21, weeklyStatus: 1)
+        let client = MiniMaxFakeChildProcessClient(results: [.success(output(envelope(rows: Array(repeating: healthy, count: 4) + [broken])))])
+        let recorder = DiagnosticTestRecorder()
+        let adapter = MiniMaxProviderAdapter(processClient: client, executableURL: URL(fileURLWithPath: "/test/mmx"), diagnostics: recorder)
+        _ = await adapter.read(scope: .provider)
+        let events = await recorder.events
+        XCTAssertEqual(events.first(where: { $0.reason == .unsupportedStatus })?.values["current_interval_status"], 2)
+    }
+
+    func testDiagnosticsPreserveInvalidWindowEvidenceAndRecoveryForReplay() async throws {
+        let broken = receiptJSON.replacingOccurrences(of: "\"current_interval_remaining_percent\": 96", with: "\"current_interval_remaining_percent\": -7")
+        let client = MiniMaxFakeChildProcessClient(results: [broken, receiptJSON].map {
+            .success(ChildProcessOutput(termination: .exited(code: 0), standardOutput: Data($0.utf8), redactedStandardError: Data()))
+        })
+        let recorder = DiagnosticTestRecorder()
+        let adapter = MiniMaxProviderAdapter(processClient: client, executableURL: URL(fileURLWithPath: "/test/mmx"),
+            diagnostics: recorder, diagnosticCLIVersion: "1.0.25")
+        guard case .partial = await adapter.read(scope: .provider) else { return XCTFail("Invalid percent must remain a partial failure") }
+        guard case .success = await adapter.read(scope: .provider) else { return XCTFail("Recovery must succeed") }
+        let events = await recorder.events
+        let failure = try XCTUnwrap(events.first(where: { $0.reason == .invalidPercent }))
+        XCTAssertEqual(failure.stage, .quota)
+        XCTAssertEqual(failure.model, "general")
+        XCTAssertEqual(failure.window, "current")
+        XCTAssertEqual(failure.values["current_interval_remaining_percent"], -7)
+        XCTAssertEqual(failure.exitCode, 0)
+        XCTAssertEqual(failure.cliVersion, "1.0.25")
+        XCTAssertEqual(events.last?.reason, .recovered)
+        // Replay only the recorded safe evidence through the actual parser/contract.
+        var row: [String: Any] = failure.values
+        row["model_name"] = failure.model
+        let data = try JSONSerialization.data(withJSONObject: ["base_resp": ["status_code": 0], "model_remains": [row]])
+        let replayed = try parse(String(decoding: data, as: UTF8.self))
+        XCTAssertEqual(replayed.effectiveCompleteness, .partial)
+        XCTAssertEqual(replayed.models.first?.current.remainingPercent, -7)
+    }
+
+    func testDiagnosticsDistinguishJSONFieldAndExecutionFailuresWithoutRawText() async throws {
+        let wrongType = receiptJSON.replacingOccurrences(of: "\"current_interval_remaining_percent\": 96", with: "\"current_interval_remaining_percent\": \"secret@example.com\"")
+        let recorder = DiagnosticTestRecorder()
+        let client = MiniMaxFakeChildProcessClient(results: [
+            .success(.init(termination: .exited(code: 0), standardOutput: Data(wrongType.utf8), redactedStandardError: Data())),
+            .success(.init(termination: .exited(code: 0), standardOutput: Data("not-json secret@example.com".utf8), redactedStandardError: Data())),
+            .success(.init(termination: .exited(code: 9), standardOutput: Data(), redactedStandardError: Data("redacted".utf8)))
+        ])
+        let adapter = MiniMaxProviderAdapter(processClient: client, executableURL: URL(fileURLWithPath: "/test/mmx"), diagnostics: recorder)
+        _ = await adapter.read(scope: .provider)
+        _ = await adapter.read(scope: .provider)
+        _ = await adapter.read(scope: .provider)
+        let events = await recorder.events
+        XCTAssertTrue(events.contains { $0.reason == .invalidType && $0.fieldPath?.hasSuffix("current_interval_remaining_percent") == true })
+        XCTAssertTrue(events.contains { $0.reason == .invalidJSON })
+        XCTAssertTrue(events.contains { $0.reason == .processFailure && $0.exitCode == 9 })
+        let encoded = String(decoding: try JSONEncoder().encode(events), as: UTF8.self)
+        XCTAssertFalse(encoded.contains("secret@example.com"))
+        XCTAssertFalse(encoded.contains("redacted"))
+        XCTAssertFalse(encoded.contains("/test/mmx"))
+    }
+
+    func testActualAdapterJournalPreservesUnsupportedStatusAfterRestartAndRecovery() async throws {
+        let directory = URL(fileURLWithPath: "/private/tmp/adapter-journal-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = ProviderDiagnosticJournal(directory: directory)
+        let broken = receiptJSON.replacingOccurrences(of: "\"current_interval_status\": 1", with: "\"current_interval_status\": 2")
+        let firstClient = MiniMaxFakeChildProcessClient(results: [
+            .success(.init(termination: .exited(code: 0), standardOutput: Data(broken.utf8), redactedStandardError: Data()))
+        ])
+        let first = MiniMaxProviderAdapter(processClient: firstClient, executableURL: URL(fileURLWithPath: "/test/mmx"), diagnostics: recorder)
+        _ = await first.read(scope: .provider)
+        // A new adapter and new store model an app restart; a first successful read
+        // must still close the earlier failure instead of losing its evidence.
+        let reopened = ProviderDiagnosticJournal(directory: directory)
+        let secondClient = MiniMaxFakeChildProcessClient(results: [
+            .success(.init(termination: .exited(code: 0), standardOutput: Data(receiptJSON.utf8), redactedStandardError: Data()))
+        ])
+        let second = MiniMaxProviderAdapter(processClient: secondClient, executableURL: URL(fileURLWithPath: "/test/mmx"), diagnostics: reopened)
+        _ = await second.read(scope: .provider)
+        let journal = await reopened.snapshot()
+        XCTAssertEqual(journal.state, .ready)
+        XCTAssertTrue(journal.events.contains { $0.reason == .unsupportedStatus && $0.values["current_interval_status"] == 2 })
+        XCTAssertEqual(journal.events.last?.reason, .recovered)
+    }
+
     private var receiptJSON: String {
         """
         {
@@ -1394,4 +1480,9 @@ private actor MiniMaxSuspendingChildProcessClient: ChildProcessClient {
         diagnosticCode: "test.process.shutdown",
         recovery: nil
     )
+}
+
+private actor DiagnosticTestRecorder: ProviderDiagnosticRecording {
+    var events: [ProviderDiagnosticEvent] = []
+    func record(_ event: ProviderDiagnosticEvent) { events.append(event) }
 }

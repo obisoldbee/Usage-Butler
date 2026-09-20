@@ -342,17 +342,6 @@
         }
       }
     },
-    "请求过于频繁": {
-      "extractionState": "manual",
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "请求过于频繁"
-          }
-        }
-      }
-    },
     "Usage-Butler": {
       "extractionState": "manual",
       "localizations": {
@@ -448,6 +437,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "仅手动"
+          }
+        }
+      }
+    },
+    "仅手动刷新": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅手动刷新"
+          }
+        }
+      }
+    },
+    "仅手动刷新 · 详情见设置中的脱敏诊断": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅手动刷新 · 详情见设置中的脱敏诊断"
           }
         }
       }
@@ -617,6 +628,17 @@
         }
       }
     },
+    "命令执行失败": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "命令执行失败"
+          }
+        }
+      }
+    },
     "响应格式不兼容": {
       "extractionState": "manual",
       "localizations": {
@@ -639,6 +661,17 @@
         }
       }
     },
+    "在访达中显示诊断记录": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在访达中显示诊断记录"
+          }
+        }
+      }
+    },
     "好": {
       "extractionState": "manual",
       "localizations": {
@@ -657,6 +690,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "完成"
+          }
+        }
+      }
+    },
+    "将于 %@ 自动重试": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将于 %@ 自动重试"
           }
         }
       }
@@ -745,6 +789,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "已取消选择 %@ CLI"
+          }
+        }
+      }
+    },
+    "已恢复": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已恢复"
           }
         }
       }
@@ -1068,6 +1123,17 @@
         }
       }
     },
+    "暂无已记录的失败或恢复事件。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无已记录的失败或恢复事件。"
+          }
+        }
+      }
+    },
     "暂时无法判断状态": {
       "extractionState": "manual",
       "localizations": {
@@ -1119,6 +1185,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "最新内存压力 %@"
+          }
+        }
+      }
+    },
+    "最近失败与恢复（保留 7 天，最多 200 条）": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近失败与恢复（保留 7 天，最多 200 条）"
           }
         }
       }
@@ -1376,6 +1453,17 @@
         }
       }
     },
+    "正在重试…": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在重试…"
+          }
+        }
+      }
+    },
     "正常": {
       "extractionState": "manual",
       "localizations": {
@@ -1497,6 +1585,28 @@
         }
       }
     },
+    "等待重新检测 · 详情见设置中的脱敏诊断": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等待重新检测 · 详情见设置中的脱敏诊断"
+          }
+        }
+      }
+    },
+    "缺少额度字段": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缺少额度字段"
+          }
+        }
+      }
+    },
     "网络不可用": {
       "extractionState": "manual",
       "localizations": {
@@ -1537,6 +1647,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "脱敏诊断动作尚未连接。"
+          }
+        }
+      }
+    },
+    "自动刷新": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动刷新"
           }
         }
       }
@@ -1596,6 +1717,17 @@
         }
       }
     },
+    "诊断记录暂时无法保存，请检查本地文件权限或可用空间。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "诊断记录暂时无法保存，请检查本地文件权限或可用空间。"
+          }
+        }
+      }
+    },
     "请先启用 %@ 再登录": {
       "extractionState": "manual",
       "localizations": {
@@ -1640,6 +1772,17 @@
         }
       }
     },
+    "请求过于频繁": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求过于频繁"
+          }
+        }
+      }
+    },
     "跟随默认": {
       "extractionState": "manual",
       "localizations": {
@@ -1647,6 +1790,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "跟随默认"
+          }
+        }
+      }
+    },
+    "输出格式无法识别": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输出格式无法识别"
           }
         }
       }
@@ -1761,6 +1915,28 @@
         }
       }
     },
+    "部分额度数据异常": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分额度数据异常"
+          }
+        }
+      }
+    },
+    "部分额度条目异常": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分额度条目异常"
+          }
+        }
+      }
+    },
     "重新检测": {
       "extractionState": "manual",
       "localizations": {
@@ -1849,6 +2025,17 @@
         }
       }
     },
+    "额度刷新失败": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度刷新失败"
+          }
+        }
+      }
+    },
     "额度刷新行为": {
       "extractionState": "manual",
       "localizations": {
@@ -1860,6 +2047,39 @@
         }
       }
     },
+    "额度加成尚不支持": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度加成尚不支持"
+          }
+        }
+      }
+    },
+    "额度字段类型不符": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度字段类型不符"
+          }
+        }
+      }
+    },
+    "额度服务返回失败状态": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度服务返回失败状态"
+          }
+        }
+      }
+    },
     "额度来源已停止": {
       "extractionState": "manual",
       "localizations": {
@@ -1867,6 +2087,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "额度来源已停止"
+          }
+        }
+      }
+    },
+    "额度状态尚不支持": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度状态尚不支持"
+          }
+        }
+      }
+    },
+    "额度百分比异常": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度百分比异常"
           }
         }
       }
@@ -1900,6 +2142,39 @@
           "stringUnit": {
             "state": "translated",
             "value": "额度缓存清除请求已完成"
+          }
+        }
+      }
+    },
+    "额度计数异常": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度计数异常"
+          }
+        }
+      }
+    },
+    "额度输出格式无法识别": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度输出格式无法识别"
+          }
+        }
+      }
+    },
+    "额度项目尚不支持": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额度项目尚不支持"
           }
         }
       }
