@@ -32,7 +32,7 @@ final class NetworkHistoryNoticeTests: XCTestCase {
         let history = [sample(age: 150), sample(age: 30)]
         XCTAssertNil(NetworkStatusRules.historyRestartNotice(old, samples: history, now: now, window: 60))
         XCTAssertEqual(NetworkStatusRules.historyRestartNotice(old, samples: history, now: now, window: 3_600),
-                       "所选范围内下载统计曾重新起算 · 详见统计说明")
+                       "所选范围内下载统计曾重新起算 · 详见网络设置")
         XCTAssertEqual(old.download.breakReason, "counter-reset", "diagnostic evidence is retained")
     }
 
@@ -42,14 +42,14 @@ final class NetworkHistoryNoticeTests: XCTestCase {
         // A measured zero is valid earlier evidence, not an unknown direction.
         XCTAssertEqual(NetworkStatusRules.historyRestartNotice(total("sampling-gap", upload: true),
                        samples: [sample(age: 45)], now: now, window: 60),
-                       "所选范围内上传统计曾重新起算 · 详见统计说明")
+                       "所选范围内上传统计曾重新起算 · 详见网络设置")
     }
 
     func testBothDirectionsRestartTogether() {
         let segment = total("epoch-changed").download
         let both = SessionByteTotal(upload: segment, download: segment)
         XCTAssertEqual(NetworkStatusRules.historyRestartNotice(both, samples: [sample(age: 45)], now: now, window: 60),
-                       "所选范围内上传、下载统计曾重新起算 · 详见统计说明")
+                       "所选范围内上传、下载统计曾重新起算 · 详见网络设置")
     }
 
     func testOutOfRangeEvidenceDoesNotCreateAWarning() {

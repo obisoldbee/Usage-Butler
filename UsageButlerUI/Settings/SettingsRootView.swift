@@ -22,16 +22,35 @@ public struct SettingsRootView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                appIdentity
-                generalSection
-                shortcutSection
-                providerSection
-                networkSection
-                aboutSection
+        VStack(spacing: 0) {
+            Picker("设置分类", selection: $model.settingsPage) {
+                ForEach(SettingsPage.allCases) { page in
+                    Text(page.title).tag(page)
+                }
             }
-            .padding(24)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 260)
+            .padding(16)
+            .accessibilityIdentifier("settings.page")
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    switch model.settingsPage {
+                    case .general:
+                        appIdentity
+                        generalSection
+                        shortcutSection
+                        providerSection
+                        aboutSection
+                    case .network:
+                        NetworkSettingsView(model: model)
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .id(model.settingsPage)
         }
         .frame(width: 760)
         .frame(minHeight: 700)
@@ -300,26 +319,6 @@ public struct SettingsRootView: View {
         }
     }
 
-    private var networkSection: some View {
-        SettingsSection(title: String(localized: "网络")) {
-            SettingsRow(
-                title: String(localized: "采集网络用量"),
-                subtitle: String(localized: "仅统计各网络接口字节数；不识别应用，关闭面板不停止采集")
-            ) {
-                // The switch shows what the collector actually acknowledged,
-                // not what was last written to preferences. They only agree
-                // when the store read back cleanly, and a corrupt store must
-                // surface as "not collecting" rather than a stale true.
-                Toggle(String(localized: "采集网络用量"), isOn: Binding(
-                    get: { model.networkCollectionEnabled },
-                    set: { model.setNetworkCollectionEnabled($0) }
-                ))
-                .labelsHidden()
-                .accessibilityIdentifier("settings.network.collectionEnabled")
-            }
-        }
-    }
-
     private var aboutSection: some View {
         SettingsSection(title: "关于") {
             HStack(spacing: 12) {
@@ -330,7 +329,7 @@ public struct SettingsRootView: View {
                 VStack(alignment: .leading) {
                     Text("额度管家")
                         .font(.headline)
-                    Text("菜单栏中的额度与内存概览")
+                    Text("菜单栏中的额度、内存与网络概览")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -979,7 +978,7 @@ private struct GlobalShortcutSettingsRow: View {
                 Text(model.globalShortcutText ?? String(localized: "未设置"))
                     .font(.system(.body, design: .monospaced))
                     .frame(minWidth: 96, alignment: .leading)
-                Text(String(localized: "设置后按快捷键直接打开或关闭面板；面板内按 Tab 键在额度与内存之间切换。"))
+                Text(String(localized: "设置后按快捷键直接打开或关闭面板；面板内按 Tab 键在额度、内存、网络三个页面之间切换。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1008,7 +1007,8 @@ private struct GlobalShortcutSettingsRow: View {
     }
 }
 
-private struct SettingsSection<Content: View>: View {    let title: String
+struct SettingsSection<Content: View>: View {
+    let title: String
     @ViewBuilder let content: Content
 
     init(title: String, @ViewBuilder content: () -> Content) {
@@ -1032,7 +1032,7 @@ private struct SettingsSection<Content: View>: View {    let title: String
     }
 }
 
-private struct SettingsRow<Trailing: View>: View {
+struct SettingsRow<Trailing: View>: View {
     let title: String
     let subtitle: String?
     @ViewBuilder let trailing: Trailing

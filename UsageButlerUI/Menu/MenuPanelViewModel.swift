@@ -19,6 +19,19 @@ public enum MenuPage: String, CaseIterable, Identifiable {
     }
 }
 
+public enum SettingsPage: String, CaseIterable, Identifiable {
+    case general
+    case network
+
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .general: String(localized: "通用与额度")
+        case .network: String(localized: "网络")
+        }
+    }
+}
+
 public enum MemoryRange: String, CaseIterable, Identifiable {
     case oneMinute = "1m"
     case tenMinutes = "10m"
@@ -240,6 +253,7 @@ public final class MenuPanelViewModel: ObservableObject {
         }
     }
     @Published public var memoryRange: MemoryRange = .oneMinute
+    @Published public var settingsPage: SettingsPage = .general
     /// Trend window on the network page; defaults to 1 h per PRD NET-02.
     @Published public var networkTrendRange: NetworkTrendRange = .oneHour
     @Published public private(set) var networkSnapshot: NetworkSnapshot?

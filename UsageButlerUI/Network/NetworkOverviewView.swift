@@ -37,8 +37,7 @@ enum NetworkPresentation {
 
 struct NetworkOverviewView: View {
     @ObservedObject var model: MenuPanelViewModel
-    @State private var advanced = false
-    @State private var details = false
+    let onOpenSettingsFallback: () -> Void
     @State private var inspectedAt: Date?
     @State private var pinned = false
     @State private var chartFocused = false
@@ -58,46 +57,26 @@ struct NetworkOverviewView: View {
             let stale = NetworkStatusRules.ratesAreStale(model.networkSnapshot, interface: name, now: now)
             VStack(alignment: .leading, spacing: 12) {
                 status(now: now, name: name, samples: samples)
-                observationSelector
+                observationSummary
                 trend(now: now, source: source, rate: rate, samples: samples, projection: projection, stale: stale)
                 #if USAGE_BUTLER_FIXTURES
                 if model.isFixtureMode { NetworkDemoApplicationsView() } else { unavailableApps }
                 #else
                 unavailableApps
                 #endif
-                DisclosureGroup("统计说明", isExpanded: $details) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("接口与应用是不同口径；物理接口、隧道与回环不相加。")
-                        if let source {
-                            Text("原始接口计数（起点未验证） 上传 \(NetworkPresentation.bytes(source.counters.bytes.upload)) · 下载 \(NetworkPresentation.bytes(source.counters.bytes.download))")
-                            Text("源采样时间 \(source.asOf.formatted(date: .omitted, time: .standard))")
-                            if let total = source.sessionTotal {
-                                segmentDiagnostic("上传", total.upload)
-                                segmentDiagnostic("下载", total.download)
-                            }
-                        }
-                        if let notice = model.networkCoverageNotice { Text("全接口诊断：\(notice)") }
-                        Text("本段累计只包括各方向当前可验证段；重置、缺失或 epoch 变化会重新建立对应基线。")
-                        Text("历史最多保留本进程最近 2 小时；退出后不恢复。启动前和未采集时段留空，属于正常情况。")
-                    }.font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                }.accessibilityIdentifier("network.diagnostics")
             }
             .onChange(of: model.networkTrendRange) { _ in resetAxes() }
             .onChange(of: name) { _ in resetAxes() }
+        }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
         }
     }
 
     private func resetAxes() {
         uploadAxis = NetworkChartAxis(); downloadAxis = NetworkChartAxis()
         inspectedAt = nil; pinned = false
-    }
-
-    @ViewBuilder
-    private func segmentDiagnostic(_ title: String, _ segment: DirectionByteTotal) -> some View {
-        if let reason = segment.breakReason {
-            let time = segment.since.map { $0.formatted(date: .omitted, time: .standard) } ?? "时点未知"
-            Text("\(title) · \(time) · \(NetworkStatusRules.sessionTotalReasonText(reason))")
-        }
     }
 
     private func status(now: Date, name: String?, samples: [NetworkRateSample]) -> some View {
@@ -123,28 +102,19 @@ struct NetworkOverviewView: View {
         }.padding(.horizontal, 4)
     }
 
-    private var observationSelector: some View {
+    private var observationSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Image(systemName: "network").foregroundStyle(.secondary)
-                Text(model.networkObservationIsAutomatic ? "自动 · \(model.networkObservationLabel)" : model.networkObservationLabel)
+                Text(model.networkObservationLabel.isEmpty
+                     ? String(localized: "当前统计网络待确认")
+                     : model.networkObservationLabel)
                     .font(.subheadline).lineLimit(2)
                 Spacer()
-                Button(advanced ? "收起" : "高级") { advanced.toggle() }
-                    .buttonStyle(.borderless).accessibilityIdentifier("network.advanced")
-            }
-            if advanced {
-                Picker("查看网络", selection: Binding(get: { model.networkObservationSelection }, set: { model.networkObservationSelection = $0 })) {
-                    Text("自动（系统当前网络）").tag("")
-                    ForEach(model.networkAdvancedInterfaceGroups) { group in
-                        Section(NetworkPresentation.interfaceKindTitle(group.kind)) {
-                            ForEach(group.interfaces, id: \.self) { Text($0).tag($0) }
-                        }
-                    }
-                    if case let .manualUnavailable(name) = model.networkObservationResolution {
-                        Text("\(name) · 已消失").tag(name)
-                    }
-                }.accessibilityIdentifier("network.interfacePicker")
+                NetworkSettingsButton(model: model, onOpenSettingsFallback: onOpenSettingsFallback)
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("network.openSettings")
+                    .help("选择统计的网络，查看统计说明")
             }
             Text(model.networkObservationSourceText).font(.caption2).foregroundStyle(.secondary)
         }.padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9))
@@ -158,9 +128,11 @@ struct NetworkOverviewView: View {
             HStack(spacing: 3) {
                 ForEach(NetworkTrendRange.allCases) { range in
                     Button { model.networkTrendRange = range } label: {
-                        Text(range.title).font(.system(size: 11)).frame(maxWidth: .infinity).padding(.vertical, 6)
+                        Text(range.title).font(.system(size: 11)).frame(maxWidth: .infinity, minHeight: 32)
                             .background(model.networkTrendRange == range ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
                             .foregroundStyle(model.networkTrendRange == range ? Color.white : Color.primary)
+                            // Plain buttons otherwise only hit-test the text in an unselected cell.
+                            .contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("network.range.\(range.rawValue)")
                         .accessibilityAddTraits(model.networkTrendRange == range ? .isSelected : [])
                 }
@@ -170,21 +142,23 @@ struct NetworkOverviewView: View {
             Divider()
             direction(.download, now: now, points: projection.points(.download), current: stale ? nil : rate?.downloadBytesPerSecond,
                       total: source?.sessionTotal?.download, peak: downloadPeak, bound: downloadAxis.upperBound, samples: samples)
-            if let inspectedAt {
-                let sample = NetworkChartInspection.sample(at: inspectedAt, in: samples)
-                Text("\(inspectedAt.formatted(date: .omitted, time: .standard)) · ↑ \(NetworkPresentation.rate(sample?.uploadBytesPerSecond)) · ↓ \(NetworkPresentation.rate(sample?.downloadBytesPerSecond))")
-                    .font(.caption).monospacedDigit().accessibilityIdentifier("network.inspection")
-            }
+            Text(inspectionText(samples: samples))
+                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                .lineLimit(1).frame(height: 16, alignment: .leading)
+                .accessibilityIdentifier("network.inspection")
             Text("独立缩放：上下两图等高不代表等速").font(.caption2).foregroundStyle(.secondary)
-            if projection.thinnedSegmentCount > 0 {
-                Text("按峰谷抽稀显示，原始样本保留").font(.caption2).foregroundStyle(.secondary)
-            }
         }
         .padding(12).background(.background, in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.55)) }
+        .overlay { RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.55)).allowsHitTesting(false) }
         .background(NetworkChartKeyboard(focused: $chartFocused, onKey: { key in inspect(key: key, samples: samples) }))
         .onAppear { updateAxes(upload: uploadPeak, download: downloadPeak) }
         .onChange(of: now) { _ in updateAxes(upload: uploadPeak, download: downloadPeak) }
+    }
+
+    private func inspectionText(samples: [NetworkRateSample]) -> String {
+        guard let inspectedAt else { return String(localized: "指向曲线查看速率，点击可固定读数") }
+        let sample = NetworkChartInspection.sample(at: inspectedAt, in: samples)
+        return "\(inspectedAt.formatted(date: .omitted, time: .standard)) · ↑ \(NetworkPresentation.rate(sample?.uploadBytesPerSecond)) · ↓ \(NetworkPresentation.rate(sample?.downloadBytesPerSecond))"
     }
 
     private func updateAxes(upload: Double, download: Double) {

@@ -128,9 +128,9 @@ public enum NetworkStatusRules {
         }
         switch (restarted(total.upload, rate: \.uploadBytesPerSecond),
                 restarted(total.download, rate: \.downloadBytesPerSecond)) {
-        case (true, true): return String(localized: "所选范围内上传、下载统计曾重新起算 · 详见统计说明")
-        case (true, false): return String(localized: "所选范围内上传统计曾重新起算 · 详见统计说明")
-        case (false, true): return String(localized: "所选范围内下载统计曾重新起算 · 详见统计说明")
+        case (true, true): return String(localized: "所选范围内上传、下载统计曾重新起算 · 详见网络设置")
+        case (true, false): return String(localized: "所选范围内上传统计曾重新起算 · 详见网络设置")
+        case (false, true): return String(localized: "所选范围内下载统计曾重新起算 · 详见网络设置")
         case (false, false): return nil
         }
     }

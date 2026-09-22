@@ -364,6 +364,17 @@
         }
       }
     },
+    "“本段累计”从各方向最近一次有效起点计算；计数重置、缺失或接口变化后会重新开始。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“本段累计”从各方向最近一次有效起点计算；计数重置、缺失或接口变化后会重新开始。"
+          }
+        }
+      }
+    },
     "∞ 无限制": {
       "extractionState": "manual",
       "localizations": {
@@ -393,6 +404,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "⌘, 设置    ⌘R 刷新    ⌘Q 退出"
+          }
+        }
+      }
+    },
+    "上传、下载独立缩放，两张图同样高不代表速率相同。长时间范围会保留峰谷简化绘图，原始样本仍保留。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上传、下载独立缩放，两张图同样高不代表速率相同。长时间范围会保留峰谷简化绘图，原始样本仍保留。"
           }
         }
       }
@@ -947,6 +969,39 @@
         }
       }
     },
+    "当前没有可用的接口采样。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前没有可用的接口采样。"
+          }
+        }
+      }
+    },
+    "当前统计网络待确认": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前统计网络待确认"
+          }
+        }
+      }
+    },
+    "当前统计：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前统计：%@"
+          }
+        }
+      }
+    },
     "当前运行时没有返回实时脱敏诊断。": {
       "extractionState": "manual",
       "localizations": {
@@ -976,6 +1031,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "当前运行时自动执行 Provider 发现与额度读取；只有你明确点击登录时，才会启动 MiniMax 或火山方舟的官方登录流程。此页不显示账号身份、token、API Key、本机路径或原始响应。"
+          }
+        }
+      }
+    },
+    "当前采样信息": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前采样信息"
           }
         }
       }
@@ -1013,6 +1079,17 @@
         }
       }
     },
+    "所选范围内上传、下载统计曾重新起算 · 详见网络设置": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选范围内上传、下载统计曾重新起算 · 详见网络设置"
+          }
+        }
+      }
+    },
     "所选范围内上传统计曾重新起算 · 详见统计说明": {
       "extractionState": "manual",
       "localizations": {
@@ -1020,6 +1097,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "所选范围内上传统计曾重新起算 · 详见统计说明"
+          }
+        }
+      }
+    },
+    "所选范围内上传统计曾重新起算 · 详见网络设置": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选范围内上传统计曾重新起算 · 详见网络设置"
           }
         }
       }
@@ -1035,6 +1123,17 @@
         }
       }
     },
+    "所选范围内下载统计曾重新起算 · 详见网络设置": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选范围内下载统计曾重新起算 · 详见网络设置"
+          }
+        }
+      }
+    },
     "所选项目不是可执行的 %@ 文件": {
       "extractionState": "manual",
       "localizations": {
@@ -1046,6 +1145,17 @@
         }
       }
     },
+    "手动选择仅用于排查 VPN 隧道、网桥或本机回环流量。只改变显示的统计对象，不会切换网络连接。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手动选择仅用于排查 VPN 隧道、网桥或本机回环流量。只改变显示的统计对象，不会切换网络连接。"
+          }
+        }
+      }
+    },
     "打开活动监视器": {
       "extractionState": "manual",
       "localizations": {
@@ -1053,6 +1163,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "打开活动监视器"
+          }
+        }
+      }
+    },
+    "指向曲线查看速率，点击可固定读数": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "指向曲线查看速率，点击可固定读数"
           }
         }
       }
@@ -1130,6 +1251,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "旧记录的累计起点未验证"
+          }
+        }
+      }
+    },
+    "时点未知": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "时点未知"
           }
         }
       }
@@ -1673,6 +1805,28 @@
         }
       }
     },
+    "统计哪个网络": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "统计哪个网络"
+          }
+        }
+      }
+    },
+    "统计对象": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "统计对象"
+          }
+        }
+      }
+    },
     "缺失计数恢复后重新起算": {
       "extractionState": "manual",
       "localizations": {
@@ -1702,6 +1856,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "网络不可用"
+          }
+        }
+      }
+    },
+    "网络设置…": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "网络设置…"
+          }
+        }
+      }
+    },
+    "网络采集": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "网络采集"
           }
         }
       }
@@ -1739,6 +1915,17 @@
         }
       }
     },
+    "自动会跟随系统当前连接的网络，通常无需修改。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动会跟随系统当前连接的网络，通常无需修改。"
+          }
+        }
+      }
+    },
     "自动刷新": {
       "extractionState": "manual",
       "localizations": {
@@ -1746,6 +1933,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "自动刷新"
+          }
+        }
+      }
+    },
+    "自动（推荐）": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动（推荐）"
+          }
+        }
+      }
+    },
+    "菜单栏中的额度、内存与网络概览": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "菜单栏中的额度、内存与网络概览"
           }
         }
       }
@@ -1801,6 +2010,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "设置"
+          }
+        }
+      }
+    },
+    "设置分类": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置分类"
+          }
+        }
+      }
+    },
+    "设置后按快捷键直接打开或关闭面板；面板内按 Tab 键在额度、内存、网络三个页面之间切换。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置后按快捷键直接打开或关闭面板；面板内按 Tab 键在额度、内存、网络三个页面之间切换。"
           }
         }
       }
@@ -1882,6 +2113,17 @@
         }
       }
     },
+    "趋势最多保留本次运行的最近 2 小时，退出后不恢复。启动前和未采集时段留空，属于正常情况。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "趋势最多保留本次运行的最近 2 小时，退出后不恢复。启动前和未采集时段留空，属于正常情况。"
+          }
+        }
+      }
+    },
     "跟随默认": {
       "extractionState": "manual",
       "localizations": {
@@ -1900,6 +2142,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "输出格式无法识别"
+          }
+        }
+      }
+    },
+    "这里统计的是网络接口，不是应用。物理网络、VPN 隧道和本机回环可能包含同一份流量，不能相加。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这里统计的是网络接口，不是应用。物理网络、VPN 隧道和本机回环可能包含同一份流量，不能相加。"
           }
         }
       }
@@ -1988,6 +2241,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "选择现有的 CLI 可执行文件；额度管家不会运行安装命令。"
+          }
+        }
+      }
+    },
+    "选择统计的网络，查看统计说明": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择统计的网络，查看统计说明"
+          }
+        }
+      }
+    },
+    "通用与额度": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通用与额度"
           }
         }
       }

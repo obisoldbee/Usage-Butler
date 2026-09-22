@@ -55,7 +55,7 @@ public struct MenuPanelRootView: View {
                             onOpenActivityMonitor: onOpenActivityMonitor
                         )
                     case .network:
-                        NetworkOverviewView(model: model)
+                        NetworkOverviewView(model: model, onOpenSettingsFallback: onOpenSettingsFallback)
                     }
                 }
                 .padding(16)

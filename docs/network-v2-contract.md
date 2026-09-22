@@ -26,7 +26,7 @@ usagebutler.network.snapshot version=2；保留v1读取。v2总量采用uploadSe
 
 0.3.0 的 NET_RT_IFLIST2 假设已被真机反例否定：虽然结构字段为 UInt64，Apple XNU 的非平台进程分支会将字节计数转换为 UInt32，产生 4 GiB 回绕。结构声明和合成 parser 测试不能证明真实来源位宽。证据：[Apple rtsock.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/rtsock.c)、[Apple if_mib.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/if_mib.c)。新读取器使用普通用户权限，无平台签名、提权或私有 entitlement；真机回归把实际读数夹在两次系统 netstat 读数之间。
 
-SystemConfiguration路径独立时效，15秒未更新降为未确认；UI不得猜Wi-Fi或代理软件归属。所选接口速率超过12秒或源时间在未来，显示未知。全局历史 reset 只在诊断显示，当前健康依据所选接口的新鲜两向速率。顶部重新起算提示须同时满足：对应方向有 breakReason、起点位于当前选择范围内、范围内该起点之前有已知速率。初始基线、启动前空白、范围外旧中断和未验证旧起点均不告警；原因与时点在统计说明保留。
+SystemConfiguration路径独立时效，15秒未更新降为未确认；UI不得猜Wi-Fi或代理软件归属。所选接口速率超过12秒或源时间在未来，显示未知。全局历史 reset 只在诊断显示，当前健康依据所选接口的新鲜两向速率。顶部重新起算提示须同时满足：对应方向有 breakReason、起点位于当前选择范围内、范围内该起点之前有已知速率。初始基线、启动前空白、范围外旧中断和未验证旧起点均不告警；原因与时点在设置 → 网络 → 当前采样信息中保留。
 
 ## 图表与交互
 
@@ -37,3 +37,9 @@ Debug演示UI与生产采集分离，Release条件编译排除演示应用/目�
 ## 生命周期与验证
 
 新会话拒绝旧会话心跳与迟到事件。stop取消消费者/发布流；正常退出等待收尾且有有界deadline。离线测试、原生窗口、安装位哈希签名、running executable、remote commit/tree分别记录。无真实应用/目标观察、无防护；VoiceOver/睡眠/代理拓扑与性能未执行项不得推成PASS。
+
+## 0.3.2 面板与设置交互
+
+五档 plain 按钮在扩展后的 label 上设置 Rectangle contentShape，32pt最小高度；装饰边框不参与命中。网络主面板不使用 DisclosureGroup，不插入条件性的游标/抽稀说明行；游标占固定行，降低实时测量导致的原生面板高度变化。网络概览事务禁用动画。
+
+Settings scene 的共享选择状态区分通用与额度、网络。主面板“网络设置…”先选网络再通过 OpenSettingsAction（macOS14+）或现有AppKit fallback（macOS13）打开独立设置；不在实时面板中承载设置。网络采集开关继续读取采集器确认值；观察选择只改变显示对象，不改变真实网络路由。
