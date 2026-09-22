@@ -15,13 +15,13 @@ final class GetifaddrsNetworkSourceTests: XCTestCase {
             self.batches = batches
         }
 
-        func read() -> [RawInterfaceCounters] {
+        func read() -> Result<[RawInterfaceCounters], InterfaceCountersReadFailure> {
             lock.lock()
             defer { lock.unlock() }
             if batches.count > 1 {
-                return batches.removeFirst()
+                return .success(batches.removeFirst())
             }
-            return batches.first ?? []
+            return .success(batches.first ?? [])
         }
     }
 
@@ -48,7 +48,7 @@ final class GetifaddrsNetworkSourceTests: XCTestCase {
         func all() -> [NetworkSourceEvent] { events }
     }
 
-    func testStreamsHeartbeatThenCountersPerInterfacePerTick() async {
+    func testStreamsHeartbeatThenAtomicCompleteEnumerationPerTick() async {
         let clock = TestClock(wallTime: baseWall, monotonicNanoseconds: 0)
         let reader = FakeCountersReader(batches: [
             [
@@ -75,7 +75,7 @@ final class GetifaddrsNetworkSourceTests: XCTestCase {
         }
         defer { drain.cancel() }
 
-        await log.waitForCount(3)
+        await log.waitForCount(2)
         var events = await log.all()
 
         // First event is the heartbeat carrying the honest capabilities.
@@ -87,7 +87,7 @@ final class GetifaddrsNetworkSourceTests: XCTestCase {
         XCTAssertEqual(events[0].envelope.sequence, 1)
         XCTAssertEqual(events[0].envelope.sessionID, sessionID)
 
-        guard case let .interfaceCounters(en0) = events[1].payload else {
+        guard case let .interfaceEnumeration(.complete(first)) = events[1].payload, let en0 = first.first else {
             return XCTFail("expected interface counters, got \(events[1].payload)")
         }
         XCTAssertEqual(en0.name, "en0")
@@ -98,22 +98,24 @@ final class GetifaddrsNetworkSourceTests: XCTestCase {
         XCTAssertEqual(en0.counters.epoch, CounterEpoch(rawValue: 7))
         XCTAssertEqual(events[1].envelope.sequence, 2)
 
-        guard case let .interfaceCounters(utun5) = events[2].payload else {
-            return XCTFail("expected interface counters, got \(events[2].payload)")
+        guard let utun5 = first.last else {
+            return XCTFail("expected interface counters, got \(events[1].payload)")
         }
         XCTAssertEqual(utun5.name, "utun5")
         XCTAssertEqual(utun5.kind, .tunnel)
-        XCTAssertEqual(events[2].envelope.sequence, 3)
+        XCTAssertEqual(first.count, 2)
 
         // The next tick reads the next batch; the sequence keeps climbing.
+        await clock.waitUntilSleepIsRegistered(until: .init(nanoseconds: 1_000_000_000))
         await clock.advance(to: 1_000_000_000)
-        await log.waitForCount(4)
+        await log.waitForCount(3)
         events = await log.all()
-        guard case let .interfaceCounters(nextEn0) = events[3].payload else {
-            return XCTFail("expected interface counters, got \(events[3].payload)")
+        guard case let .interfaceEnumeration(.complete(second)) = events[2].payload, let nextEn0 = second.first else {
+            return XCTFail("expected interface counters, got \(events[2].payload)")
         }
         XCTAssertEqual(nextEn0.counters.bytes.upload, 300)
-        XCTAssertEqual(events[3].envelope.sequence, 4)
+        XCTAssertEqual(events[2].envelope.sequence, 3)
+        XCTAssertEqual(second.count, 1)
     }
 
     func testCancellingTheConsumerStopsTheStream() async {
@@ -146,6 +148,26 @@ final class GetifaddrsNetworkSourceTests: XCTestCase {
         XCTAssertEqual(events.count, 2)
     }
 
+    private struct OutcomeReader: InterfaceCountersReading {
+        let outcome: Result<[RawInterfaceCounters], InterfaceCountersReadFailure>
+        func read() -> Result<[RawInterfaceCounters], InterfaceCountersReadFailure> { outcome }
+    }
+
+    func testReaderFailureAndSuccessfulEmptyRemainDifferentSourceEvents() async {
+        for outcome in [Result<[RawInterfaceCounters], InterfaceCountersReadFailure>.success([]), .failure(.unavailable)] {
+            let source = GetifaddrsNetworkSource(clock: TestClock(), reader: OutcomeReader(outcome: outcome),
+                sessionID: .init(rawValue: "empty-vs-failure"), epoch: .init(rawValue: 1))
+            var iterator = source.events().makeAsyncIterator()
+            _ = await iterator.next()
+            let event = await iterator.next()
+            switch outcome {
+            case .success: XCTAssertEqual(event?.payload, .interfaceEnumeration(.complete([])))
+            case .failure: XCTAssertEqual(event?.payload, .interfaceEnumeration(.failed))
+            }
+            XCTAssertEqual(event?.envelope.sequence, 2)
+        }
+    }
+
     func testBootEpochReadsSystemBootTime() {
         // Smoke: on any booted macOS system kern.boottime is a positive epoch.
         XCTAssertGreaterThan(GetifaddrsNetworkSource.bootEpoch(), 0)
@@ -168,9 +190,9 @@ final class GetifaddrsInterfaceCountersReaderTests: XCTestCase {
         XCTAssertEqual(GetifaddrsInterfaceCountersReader.classify(name: ""), .other)
     }
 
-    func testLiveReadReturnsSortedNonEmptyInterfaces() {
+    func testLiveReadReturnsSortedNonEmptyInterfaces() throws {
         // Smoke against the real interface MIB: every booted Mac has loopback.
-        let interfaces = GetifaddrsInterfaceCountersReader().read()
+        let interfaces = try GetifaddrsInterfaceCountersReader().read().get()
         XCTAssertFalse(interfaces.isEmpty)
         XCTAssertEqual(interfaces.map(\.name), interfaces.map(\.name).sorted())
         XCTAssertTrue(interfaces.allSatisfy { !$0.name.isEmpty })

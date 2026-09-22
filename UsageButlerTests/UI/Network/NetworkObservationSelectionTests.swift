@@ -53,7 +53,9 @@ final class NetworkObservationSelectionTests: XCTestCase {
                 ))
             }),
             apps: [:],
-            interfaceRates: [:]
+            interfaceRates: [:],
+            interfaceInventory: .init(envelope: .init(sessionID: .init(rawValue: "s-1"), sequence: 1,
+                occurredAt: base, monotonicOccurredAt: .init(nanoseconds: 1)), succeeded: true, names: Set(names))
         )
     }
 

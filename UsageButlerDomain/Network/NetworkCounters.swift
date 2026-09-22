@@ -137,6 +137,9 @@ public struct SessionByteTotal: Equatable, Sendable {
 /// interface" only; they are never summed with per-app counters, and a proxy
 /// TUN interface double-counts the physical one by design.
 public struct InterfaceCounters: Equatable, Sendable {
+    /// System interface index, when independently read. Same name alone is
+    /// not proof of identity, and index reuse between polls is not detectable.
+    public let systemIdentity: String?
     public let name: String
     public let kind: NetworkInterfaceKind
     public let counters: NetworkByteCounters
@@ -156,9 +159,11 @@ public struct InterfaceCounters: Equatable, Sendable {
         asOf: Date,
         monotonicAsOf: MonotonicInstant,
         sessionTotal: SessionByteTotal? = nil,
-        samplingInterval: TimeInterval? = nil
+        samplingInterval: TimeInterval? = nil,
+        systemIdentity: String? = nil
     ) {
         self.name = name
+        self.systemIdentity = systemIdentity
         self.kind = kind
         self.counters = counters
         self.asOf = asOf
@@ -181,7 +186,8 @@ public struct InterfaceCounters: Equatable, Sendable {
             asOf: asOf,
             monotonicAsOf: monotonicAsOf,
             sessionTotal: sessionTotal,
-            samplingInterval: samplingInterval
+            samplingInterval: samplingInterval,
+            systemIdentity: systemIdentity
         )
     }
 
@@ -193,7 +199,8 @@ public struct InterfaceCounters: Equatable, Sendable {
             asOf: asOf,
             monotonicAsOf: monotonicAsOf,
             sessionTotal: sessionTotal,
-            samplingInterval: samplingInterval
+            samplingInterval: samplingInterval,
+            systemIdentity: systemIdentity
         )
     }
 }

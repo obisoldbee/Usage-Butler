@@ -33,6 +33,10 @@ public struct SettingsRootView: View {
             .frame(width: 260)
             .padding(16)
             .accessibilityIdentifier("settings.page")
+            Text(model.settingsSourceDisclosure)
+                .font(.caption).foregroundStyle(.secondary).padding(.bottom, 12)
+                .accessibilityLabel(model.settingsSourceDisclosure)
+                .accessibilityIdentifier("settings.sourceDisclosure")
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -58,8 +62,14 @@ public struct SettingsRootView: View {
         .sheet(isPresented: $showingDiagnostics) {
             diagnosticsSheet
         }
+        .task(id: model.settingsPage) {
+            await model.loadSettingsStatus(for: model.settingsPage)
+        }
         .task {
-            await model.loadLarkQuotaAlertChannelStatus()
+            while !Task.isCancelled {
+                model.tickNetworkPathFreshness()
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            }
         }
     }
 
@@ -79,24 +89,7 @@ public struct SettingsRootView: View {
             }
             Spacer()
 
-            #if USAGE_BUTLER_FIXTURES
-            Label(
-                model.isFixtureMode ? "本地 Fixture · 非实时" : "本机运行时 · 只读",
-                systemImage: model.isFixtureMode ? "hammer.fill" : "lock.open.display"
-            )
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel(
-                    model.isFixtureMode
-                        ? "测试数据，本地 Fixture，非实时，不会连接额度来源"
-                        : "本机只读额度运行时"
-                )
-            #else
-            Label("本机运行时 · 只读", systemImage: "lock.open.display")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("本机只读额度运行时")
-            #endif
+
         }
         .padding(.bottom, 4)
     }

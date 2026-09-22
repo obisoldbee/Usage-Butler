@@ -254,7 +254,9 @@ final class NetworkCurveValidation {
                     asOf: wall,
                     window: .seconds(1)
                 )
-            ]
+            ],
+            interfaceInventory: .init(envelope: .init(sessionID: .init(rawValue: session), sequence: sequence,
+                occurredAt: wall, monotonicOccurredAt: monotonic), succeeded: true, names: ["en0", "utun5"])
         )
     }
 

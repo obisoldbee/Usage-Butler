@@ -43,6 +43,9 @@ public enum NetworkSourcePayload: Equatable, Sendable {
     /// Per-interface counters (boot-epoch cumulative from getifaddrs, or
     /// interval deltas from another source).
     case interfaceCounters(InterfaceCounters)
+    /// One completed read, atomically carrying every interface or an explicit
+    /// failure. Individual counter events never prove that another name left.
+    case interfaceEnumeration(NetworkInterfaceEnumeration)
     /// A previously observed process exited. Its history stays readable and
     /// is marked exited; a later PID reuse creates a new process.
     case processExited(ProcessIdentity)
@@ -58,5 +61,27 @@ public struct NetworkSourceEvent: Equatable, Sendable {
     public init(envelope: NetworkEventEnvelope, payload: NetworkSourcePayload) {
         self.envelope = envelope
         self.payload = payload
+    }
+}
+
+public enum NetworkInterfaceEnumeration: Equatable, Sendable {
+    case complete([InterfaceCounters])
+    case failed
+}
+
+public enum NetworkInterfacePresence: String, Equatable, Sendable {
+    case present, missing, unknown, notObserved
+}
+
+/// Latest completed enumeration, with the same ordered session boundary as
+/// counters. No inventory is legacy/unknown evidence, never an empty success.
+public struct NetworkInterfaceInventory: Equatable, Sendable {
+    public let envelope: NetworkEventEnvelope
+    public let succeeded: Bool
+    public let names: Set<String>
+    public init(envelope: NetworkEventEnvelope, succeeded: Bool, names: Set<String>) {
+        self.envelope = envelope
+        self.succeeded = succeeded
+        self.names = succeeded ? names : []
     }
 }

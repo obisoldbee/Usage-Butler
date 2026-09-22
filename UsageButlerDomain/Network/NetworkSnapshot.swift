@@ -139,6 +139,7 @@ public struct NetworkSnapshot: Equatable, Sendable {
     public let capabilities: NetworkCapabilities
     /// One entry per observed interface, keyed by interface name.
     public let interfaces: [String: InterfaceCounters]
+    public let interfaceInventory: NetworkInterfaceInventory?
     /// One entry per stable app identity key (`AppIdentity.stableKey`).
     public let apps: [String: AppNetworkCounters]
     /// Current interface rates keyed by interface name; absent when the
@@ -158,7 +159,8 @@ public struct NetworkSnapshot: Equatable, Sendable {
         interfaces: [String: InterfaceCounters],
         apps: [String: AppNetworkCounters],
         interfaceRates: [String: NetworkRate],
-        rateHistory: [String: [NetworkRateSample]]? = nil
+        rateHistory: [String: [NetworkRateSample]]? = nil,
+        interfaceInventory: NetworkInterfaceInventory? = nil
     ) {
         self.sessionID = sessionID
         self.appliedSequence = appliedSequence
@@ -171,5 +173,16 @@ public struct NetworkSnapshot: Equatable, Sendable {
         self.apps = apps
         self.interfaceRates = interfaceRates
         self.rateHistory = rateHistory
+        self.interfaceInventory = interfaceInventory
     }
+    public func presence(of name: String) -> NetworkInterfacePresence {
+        if collectionState == .stopped { return .notObserved }
+        if case .disconnected = collectionState { return .unknown }
+        guard let inventory = interfaceInventory,
+              inventory.envelope.sessionID == sessionID,
+              inventory.envelope.sequence <= appliedSequence,
+              inventory.succeeded else { return .unknown }
+        return inventory.names.contains(name) ? .present : .missing
+    }
+
 }

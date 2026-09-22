@@ -9,7 +9,7 @@ final class InterfaceCounters64Tests: XCTestCase {
     /// reader with the system tool before and after, allowing live traffic.
     func testLiveCountersStayBetweenSystemReadings() throws {
         let before = try systemCounters()
-        let actual = GetifaddrsInterfaceCountersReader().read()
+        let actual = try GetifaddrsInterfaceCountersReader().read().get()
         let after = try systemCounters()
         var checked = 0
         for row in actual {
@@ -53,13 +53,13 @@ final class InterfaceCounters64Tests: XCTestCase {
         return result
     }
 
-    func testParserPreservesCountsBeyond32Bits() {
+    func testParserPreservesCountsBeyond32Bits() throws {
         var record = ifmibdata()
         withUnsafeMutableBytes(of: &record.ifmd_name) { $0.copyBytes(from: Array("lo0\0".utf8)) }
         record.ifmd_data.ifi_obytes = 9_007_199_254_740_993
         record.ifmd_data.ifi_ibytes = 8_000_000_000
         let data = withUnsafeBytes(of: &record) { Data($0) }
-        let result = GetifaddrsInterfaceCountersReader.decode(data)
+        let result = try GetifaddrsInterfaceCountersReader.decode(data).get()
         XCTAssertEqual(result.first?.uploadBytes, 9_007_199_254_740_993)
         XCTAssertEqual(result.first?.downloadBytes, 8_000_000_000)
     }
@@ -68,13 +68,13 @@ final class InterfaceCounters64Tests: XCTestCase {
         withUnsafeMutableBytes(of: &record.ifmd_name) { $0.copyBytes(from: Array("lo0\0".utf8)) }
         var data = withUnsafeBytes(of: &record) { Data($0) }
         data.append(0)
-        XCTAssertTrue(GetifaddrsInterfaceCountersReader.decode(data).isEmpty)
-        XCTAssertTrue(GetifaddrsInterfaceCountersReader.decode(Data()).isEmpty)
+        XCTAssertEqual(GetifaddrsInterfaceCountersReader.decode(data), .failure(.malformed))
+        XCTAssertEqual(GetifaddrsInterfaceCountersReader.decode(Data()), .success([]))
     }
     func testDetachedOrUnterminatedNameDoesNotCreateAZeroInterface() {
         var detached = ifmibdata()
-        XCTAssertTrue(GetifaddrsInterfaceCountersReader.decode(withUnsafeBytes(of: &detached) { Data($0) }).isEmpty)
+        XCTAssertEqual(GetifaddrsInterfaceCountersReader.decode(withUnsafeBytes(of: &detached) { Data($0) }), .success([]))
         withUnsafeMutableBytes(of: &detached.ifmd_name) { $0.initializeMemory(as: UInt8.self, repeating: 65) }
-        XCTAssertTrue(GetifaddrsInterfaceCountersReader.decode(withUnsafeBytes(of: &detached) { Data($0) }).isEmpty)
+        XCTAssertEqual(GetifaddrsInterfaceCountersReader.decode(withUnsafeBytes(of: &detached) { Data($0) }), .failure(.malformed))
     }
 }

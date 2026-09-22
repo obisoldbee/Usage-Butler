@@ -90,7 +90,7 @@ final class NetworkChartProjectionTests: XCTestCase {
         // upload: one run over t1,t2. download: one run containing only t2.
         XCTAssertEqual(seriesKeys(projection.points).count, 2, "directions must not share a line")
         XCTAssertTrue(Set(projection.points.map(\.seriesKey)).allSatisfy { key in
-            projection.points.filter { $0.seriesKey == key }.allSatisfy { $0.direction.scaleKey == key.components(separatedBy: "|")[3] }
+            Set(projection.points.filter { $0.seriesKey == key }.map(\.direction)).count == 1
         }, "every point in a series belongs to one direction")
     }
 

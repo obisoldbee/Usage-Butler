@@ -18,7 +18,8 @@ public enum NetworkFixtureCatalog {
 
     public static func snapshot(
         now: Date = Date(),
-        collecting: Bool = true
+        collecting: Bool = true,
+        zeroRates: Bool = false
     ) -> NetworkSnapshot {
         let monotonic = MonotonicInstant(nanoseconds: DispatchTime.now().uptimeNanoseconds)
         let epoch = CounterEpoch(rawValue: 1_700_000_000)
@@ -42,7 +43,7 @@ public enum NetworkFixtureCatalog {
                 asOf: now,
                 monotonicAsOf: monotonic,
                 sessionTotal: SessionByteTotal(
-                    bytes: DirectionalBytes(upload: sessionUpload, download: sessionDownload),
+                    bytes: DirectionalBytes(upload: zeroRates ? 0 : sessionUpload, download: zeroRates ? 0 : sessionDownload),
                     since: now.addingTimeInterval(-240),
                     sinceMonotonic: MonotonicInstant(
                         nanoseconds: max(0, monotonic.nanoseconds - 240_000_000_000)
@@ -63,8 +64,8 @@ public enum NetworkFixtureCatalog {
         let rates: [String: NetworkRate] = collecting
             ? [
                 "en0": NetworkRate(
-                    uploadBytesPerSecond: 29_000,
-                    downloadBytesPerSecond: 2_900_000,
+                    uploadBytesPerSecond: zeroRates ? 0 : 29_000,
+                    downloadBytesPerSecond: zeroRates ? 0 : 2_900_000,
                     asOf: now,
                     window: .seconds(1)
                 )
@@ -73,11 +74,11 @@ public enum NetworkFixtureCatalog {
 
         let history: [NetworkRateSample] = collecting ? (0..<240).map { i in
             let t = now.addingTimeInterval(Double(i - 239))
-            let gap = (95...108).contains(i)
+            let gap = !zeroRates && (95...108).contains(i)
             return NetworkRateSample(captureSessionID: .init(rawValue: "fixture-network"), counterEpoch: epoch,
                 sampledAt: t, sampledMonotonic: .init(nanoseconds: monotonic.nanoseconds - UInt64(239 - i) * 1_000_000_000),
-                uploadBytesPerSecond: gap ? nil : Double(10 + i % 20) * 1_000,
-                downloadBytesPerSecond: gap ? nil : Double(10 + i % 20) * 100_000,
+                uploadBytesPerSecond: gap ? nil : (zeroRates ? 0 : Double(10 + i % 20) * 1_000),
+                downloadBytesPerSecond: gap ? nil : (zeroRates ? 0 : Double(10 + i % 20) * 100_000),
                 interfaceName: "en0", samplingInterval: 1)
         } : []
 
@@ -112,7 +113,10 @@ public enum NetworkFixtureCatalog {
             interfaces: interfaces,
             apps: [:],
             interfaceRates: rates,
-            rateHistory: ["en0": history]
+            rateHistory: ["en0": history],
+            interfaceInventory: .init(envelope: .init(sessionID: .init(rawValue: "fixture-network"),
+                sequence: collecting ? 2 : 0, occurredAt: now, monotonicOccurredAt: monotonic),
+                succeeded: collecting, names: Set(interfaces.keys))
         )
     }
 }

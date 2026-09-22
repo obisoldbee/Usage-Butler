@@ -5,6 +5,7 @@ import UsageButlerDomain
 /// host's perspective: `uploadBytes` is transmitted by the interface,
 /// `downloadBytes` is received by it.
 public struct RawInterfaceCounters: Equatable, Sendable {
+    public let systemIdentity: String?
     public let name: String
     public let kind: NetworkInterfaceKind
     public let uploadBytes: UInt64
@@ -14,8 +15,10 @@ public struct RawInterfaceCounters: Equatable, Sendable {
         name: String,
         kind: NetworkInterfaceKind,
         uploadBytes: UInt64,
-        downloadBytes: UInt64
+        downloadBytes: UInt64,
+        systemIdentity: String? = nil
     ) {
+        self.systemIdentity = systemIdentity
         self.name = name
         self.kind = kind
         self.uploadBytes = uploadBytes
@@ -27,5 +30,9 @@ public struct RawInterfaceCounters: Equatable, Sendable {
 /// Implementations must be cheap enough for a 1 Hz poll. The live reader
 /// performs a bounded local sysctl read, without launching subprocesses.
 public protocol InterfaceCountersReading: Sendable {
-    func read() -> [RawInterfaceCounters]
+    func read() -> Result<[RawInterfaceCounters], InterfaceCountersReadFailure>
+}
+
+public enum InterfaceCountersReadFailure: Error, Equatable, Sendable {
+    case unavailable, malformed, oversized
 }

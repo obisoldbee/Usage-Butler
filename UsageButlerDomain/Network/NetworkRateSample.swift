@@ -6,6 +6,9 @@ import Foundation
 /// publish time of the snapshot that happened to carry it. A snapshot that
 /// re-emits an unchanged rate therefore cannot add a phantom "fresh" point.
 public struct NetworkRateSample: Equatable, Sendable {
+    /// Origin of each continuous direction, retained even after history trim.
+    public let uploadContinuityID: String?
+    public let downloadContinuityID: String?
     public let sourceID: String
     public let interfaceName: String
     public let samplingInterval: TimeInterval?
@@ -31,8 +34,12 @@ public struct NetworkRateSample: Equatable, Sendable {
         downloadBytesPerSecond: Double?,
         sourceID: String = "interface-counters",
         interfaceName: String = "",
-        samplingInterval: TimeInterval? = nil
+        samplingInterval: TimeInterval? = nil,
+        uploadContinuityID: String? = nil,
+        downloadContinuityID: String? = nil
     ) {
+        self.uploadContinuityID = uploadContinuityID
+        self.downloadContinuityID = downloadContinuityID
         self.sourceID = sourceID
         self.interfaceName = interfaceName
         self.samplingInterval = samplingInterval.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
@@ -42,6 +49,14 @@ public struct NetworkRateSample: Equatable, Sendable {
         self.sampledMonotonic = sampledMonotonic
         self.uploadBytesPerSecond = uploadBytesPerSecond.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
         self.downloadBytesPerSecond = downloadBytesPerSecond.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+    }
+
+    public func withContinuity(upload: String?, download: String?) -> NetworkRateSample {
+        .init(captureSessionID: captureSessionID, counterEpoch: counterEpoch,
+              sampledAt: sampledAt, sampledMonotonic: sampledMonotonic,
+              uploadBytesPerSecond: uploadBytesPerSecond, downloadBytesPerSecond: downloadBytesPerSecond,
+              sourceID: sourceID, interfaceName: interfaceName, samplingInterval: samplingInterval,
+              uploadContinuityID: upload, downloadContinuityID: download)
     }
 
     /// A sample with neither direction known still carries information: it is a

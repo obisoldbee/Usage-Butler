@@ -14,11 +14,16 @@ public enum NetworkObservationPointResolver {
     public static func resolve(
         path: NetworkSystemPath,
         manualSelection: String?,
-        observedInterfaces: Set<String>
+        isObserving: Bool = true,
+        presence: (String) -> NetworkInterfacePresence
     ) -> NetworkObservationResolution {
+        guard isObserving else { return .notObserved(interfaceName: manualSelection ?? path.primaryInterfaceName) }
         if let manual = manualSelection {
-            guard observedInterfaces.contains(manual) else {
-                return .manualUnavailable(interfaceName: manual)
+            switch presence(manual) {
+            case .missing: return .manualUnavailable(interfaceName: manual)
+            case .unknown: return .presenceUnknown(interfaceName: manual)
+            case .notObserved: return .notObserved(interfaceName: manual)
+            case .present: break
             }
             return .resolved(NetworkObservationPoint(
                 interfaceName: manual,
@@ -28,7 +33,11 @@ public enum NetworkObservationPointResolver {
         }
         guard path.isReadable else { return .systemStateUnreadable }
         guard let primary = path.primaryInterfaceName else { return .noActiveNetwork }
-        guard observedInterfaces.contains(primary) else {
+        switch presence(primary) {
+        case .unknown: return .presenceUnknown(interfaceName: primary)
+        case .notObserved: return .notObserved(interfaceName: primary)
+        case .present: break
+        case .missing:
             // The system says a network is connected but no counters for it
             // have arrived. Claiming another interface instead would be the
             // silent caliber switch this rule exists to prevent.

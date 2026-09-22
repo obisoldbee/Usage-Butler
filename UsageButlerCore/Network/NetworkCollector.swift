@@ -36,6 +36,8 @@ public actor NetworkCollector {
 
     private var settings: NetworkSettings = .default
     private var aggregator: NetworkAggregator?
+    private var retainedInterfaces: [String: InterfaceCounters] = [:]
+    private var retainedHistory: [String: [NetworkRateSample]] = [:]
     private var source: (any NetworkObservationSource)?
     private var collectionState: NetworkCollectionState = .stopped
     private var capabilities: NetworkCapabilities
@@ -50,6 +52,11 @@ public actor NetworkCollector {
     /// termination callbacks carry this token instead.
     private var subscriptionToken: UInt64 = 0
     private var started = false
+    private var isShutdown = false
+    private var lifecycleGeneration: UInt64 = 0
+    private var publicationGeneration: UInt64 = 0
+    /// Accepted preference writes outlive stop, but cannot reorder on disk.
+    private var settingsSaveTask: Task<Void, Never>?
     /// The user's most recent explicit word about collection, which outranks
     /// whatever copy `start()` happened to load.
     private var collectionIntent: Bool?
@@ -73,46 +80,67 @@ public actor NetworkCollector {
     /// unreadable store falls back to defaults; collection then follows the
     /// default (disabled) preference.
     public func start() async {
-        guard !started else { return }
+        guard !started, !isShutdown else { return }
         started = true
-        if case let .success(loaded) = await settingsStore.load() {
-            settings = loaded
-        }
-        if collectionIntent ?? settings.collectionEnabled {
-            restartSession()
-        }
+        lifecycleGeneration &+= 1
+        let generation = lifecycleGeneration
+        let loaded = await settingsStore.load()
+        guard started, generation == lifecycleGeneration, !Task.isCancelled else { return }
+        if case let .success(value) = loaded { settings = value }
+        if let collectionIntent { settings.collectionEnabled = collectionIntent }
+        if settings.collectionEnabled, source == nil { restartSession() }
         startPublishLoop()
         await publishNow(force: true)
     }
 
-    /// Stops both loops and finishes the update stream.
+    /// Runtime stop is synchronous within the actor. Already accepted saves
+    /// remain ordered; shutdown may drain them via flushSettings().
     public func stop() {
         started = false
+        lifecycleGeneration &+= 1
+        publicationGeneration &+= 1
         tearDownSession()
         publishTask?.cancel()
         publishTask = nil
         continuation?.finish()
         continuation = nil
+        lastPublishedKey = nil
     }
 
-    /// Persists and applies the user preference. Persistence is best-effort:
-    /// a failed save loses the preference across relaunch but never blocks
-    /// the runtime change the user just asked for.
     public func setCollectionEnabled(_ enabled: Bool) async {
-        let changed = enabled != settings.collectionEnabled
+        guard !isShutdown else { return }
         collectionIntent = enabled
         settings.collectionEnabled = enabled
-        if changed { _ = await settingsStore.save(settings) }
+        // Queue before any await: later intents must always land after this
+        // write, even if a store ignores cancellation or temporarily fails.
+        let previousSave = settingsSaveTask
+        let value = settings
+        let store = settingsStore
+        let save = Task {
+            await previousSave?.value
+            _ = await store.save(value)
+        }
+        settingsSaveTask = save
         if enabled {
-            if changed { restartSession() }
+            if started, source == nil { restartSession() }
         } else {
-            // Applied even when the cached preference already read false: an
-            // explicit stop must not be dropped because a copy looked
-            // satisfied. `start()` can be in flight with a preference it read
-            // before this call landed, and the user's word outranks it.
             tearDownSession()
         }
         await publishNow(force: true)
+        await save.value
+        // No runtime work after persistence. The intent may now be obsolete.
+    }
+
+    /// Final process boundary, unlike the restartable stop(). Late UI/start
+    /// tasks cannot accept more work after shutdown starts.
+    public func shutdown() async {
+        isShutdown = true
+        stop()
+        await flushSettings()
+    }
+
+    public func flushSettings() async {
+        await settingsSaveTask?.value
     }
 
     /// Adopts a new publish cadence by restarting the publish loop.
@@ -120,13 +148,14 @@ public actor NetworkCollector {
         guard policy != self.policy else { return }
         self.policy = policy
         publishTask?.cancel()
-        startPublishLoop()
+        if started { startPublishLoop() }
     }
 
     /// Publishes immediately. When the source disconnected, performs one
     /// bounded reconnect — a brand-new session, never a merge with the old
     /// one — before publishing.
     public func refreshNow() async {
+        guard started else { return }
         if case .disconnected = collectionState, settings.collectionEnabled {
             restartSession()
         }
@@ -155,6 +184,7 @@ public actor NetworkCollector {
     /// snapshot so a fresh panel never renders empty while waiting for the
     /// next publish tick.
     public func updates() -> AsyncStream<NetworkSnapshot> {
+        guard !isShutdown else { return AsyncStream { $0.finish() } }
         let (stream, continuation) = AsyncStream<NetworkSnapshot>.makeStream()
         let superseded = self.continuation
         subscriptionToken &+= 1
@@ -179,12 +209,18 @@ public actor NetworkCollector {
         let sessionID = CaptureSessionID(rawValue: "network-\(sessionCounter)")
         let source = makeSource(sessionID)
         self.source = source
-        aggregator = NetworkAggregator(sessionID: sessionID)
+        if let observation = aggregator?.retainedObservation {
+            retainedInterfaces = observation.interfaces; retainedHistory = observation.history
+        }
+        aggregator = NetworkAggregator(sessionID: sessionID, retainedInterfaces: retainedInterfaces, retainedHistory: retainedHistory)
         collectionState = .starting
         consumeTask = Task { await self.consume(source: source, sessionID: sessionID) }
     }
 
     private func tearDownSession() {
+        if let observation = aggregator?.retainedObservation {
+            retainedInterfaces = observation.interfaces; retainedHistory = observation.history
+        }
         consumeTask?.cancel()
         consumeTask = nil
         source = nil
@@ -201,27 +237,23 @@ public actor NetworkCollector {
     }
 
     private func handle(_ event: NetworkSourceEvent) {
-        guard event.envelope.sessionID == aggregator?.sessionID else { return }
-        if case let .heartbeat(observed) = event.payload {
-            capabilities = observed
-        }
+        guard started, settings.collectionEnabled, event.envelope.sessionID == aggregator?.sessionID else { return }
         guard var aggregator else { return }
         let applied = aggregator.apply(event)
         self.aggregator = aggregator
-        // A heartbeat alone does not prove live sampling; the first applied
-        // non-heartbeat event flips starting to active.
-        if applied, case .starting = collectionState {
-            if case .heartbeat = event.payload {
-                // keep starting
-            } else {
-                collectionState = .active
-            }
+        guard applied else { return }
+        switch event.payload {
+        case let .heartbeat(observed): capabilities = observed
+        case .interfaceEnumeration(.failed): collectionState = .partial(reason: "interface-enumeration-failed")
+        case .interfaceEnumeration(.complete): collectionState = .active
+        default:
+            if case .starting = collectionState { collectionState = .active }
         }
     }
 
     private func streamFinished(sessionID: CaptureSessionID) {
         // A retired session's stream ending must not disturb the current one.
-        guard aggregator?.sessionID == sessionID,
+        guard started, aggregator?.sessionID == sessionID,
               settings.collectionEnabled,
               collectionState != .stopped
         else { return }
@@ -231,22 +263,30 @@ public actor NetworkCollector {
     // MARK: - Publication
 
     private func startPublishLoop() {
-        publishTask = Task { await self.runPublishLoop() }
+        guard started else { return }
+        publishTask?.cancel()
+        publicationGeneration &+= 1
+        let generation = publicationGeneration
+        publishTask = Task { await self.runPublishLoop(generation: generation) }
     }
 
-    private func runPublishLoop() async {
-        while !Task.isCancelled {
+    private func runPublishLoop(generation: UInt64) async {
+        while started, generation == publicationGeneration, !Task.isCancelled {
             let reading = await clock.reading()
+            guard started, generation == publicationGeneration, !Task.isCancelled else { return }
             publishSnapshot(asOf: reading, force: false)
             let deadline = MonotonicInstant(
                 nanoseconds: reading.monotonicTime.nanoseconds &+ Self.nanoseconds(for: policy.minimumInterval)
             )
-            try? await clock.sleep(until: deadline)
+            do { try await clock.sleep(until: deadline) } catch { return }
         }
     }
 
     private func publishNow(force: Bool) async {
+        guard started else { return }
+        let generation = lifecycleGeneration
         let reading = await clock.reading()
+        guard started, generation == lifecycleGeneration, !Task.isCancelled else { return }
         publishSnapshot(asOf: reading, force: force)
     }
 
@@ -281,9 +321,10 @@ public actor NetworkCollector {
             collectionState: collectionState,
             coverage: NetworkCoverageProfile.stopped.idleCoverage(),
             capabilities: idleCapabilities,
-            interfaces: [:],
+            interfaces: retainedInterfaces,
             apps: [:],
-            interfaceRates: [:]
+            interfaceRates: [:],
+            rateHistory: retainedHistory
         )
     }
 

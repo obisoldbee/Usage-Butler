@@ -75,25 +75,23 @@ public struct GetifaddrsNetworkSource: NetworkObservationSource {
                 emit(.heartbeat(capabilities: Self.interfaceOnlyCapabilities), at: await clock.reading())
                 while !Task.isCancelled {
                     let reading = await clock.reading()
-                    for sample in reader.read() {
-                        emit(
-                            .interfaceCounters(InterfaceCounters(
-                                name: sample.name,
-                                kind: sample.kind,
+                    guard !Task.isCancelled else { break }
+                    let result = reader.read()
+                    guard !Task.isCancelled else { break }
+                    switch result {
+                    case let .success(rows):
+                        let samples = rows.map { sample in
+                            InterfaceCounters(name: sample.name, kind: sample.kind,
                                 counters: NetworkByteCounters(
-                                    bytes: DirectionalBytes(
-                                        upload: sample.uploadBytes,
-                                        download: sample.downloadBytes
-                                    ),
-                                    semantics: .cumulativeSinceEpoch,
-                                    epoch: epoch
-                                ),
-                                asOf: reading.wallTime,
-                                monotonicAsOf: reading.monotonicTime,
-                                samplingInterval: Double(intervalNanos) / 1e9
-                            )),
-                            at: reading
-                        )
+                                    bytes: .init(upload: sample.uploadBytes, download: sample.downloadBytes),
+                                    semantics: .cumulativeSinceEpoch, epoch: epoch),
+                                asOf: reading.wallTime, monotonicAsOf: reading.monotonicTime,
+                                samplingInterval: Double(intervalNanos) / 1e9,
+                                systemIdentity: sample.systemIdentity)
+                        }
+                        emit(.interfaceEnumeration(.complete(samples)), at: reading)
+                    case .failure:
+                        emit(.interfaceEnumeration(.failed), at: reading)
                     }
                     let deadline = MonotonicInstant(
                         nanoseconds: reading.monotonicTime.nanoseconds &+ intervalNanos

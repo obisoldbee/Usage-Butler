@@ -258,6 +258,8 @@ public final class MenuPanelViewModel: ObservableObject {
     @Published public var networkTrendRange: NetworkTrendRange = .oneHour
     @Published public private(set) var networkSnapshot: NetworkSnapshot?
     @Published public private(set) var networkRateHistory = NetworkRateHistoryBuffer()
+    public private(set) var networkHistoryRevision: UInt64 = 0
+    private var networkChartCache = NetworkChartProjectionCache()
     /// Sticky user interface choice. A vanished interface stays selected and
     /// renders unavailable; the caliber never switches silently (NET-02).
     @Published public var userSelectedNetworkInterface: String?
@@ -265,6 +267,9 @@ public final class MenuPanelViewModel: ObservableObject {
     /// the runtime so the view model stays free of SystemConfiguration.
     @Published public private(set) var networkSystemPath: NetworkSystemPath = .unreadable
     public private(set) var networkSystemPathUpdatedAt: Date?
+    private var networkPathCache = NetworkPathCache()
+    private let networkClock: () -> ClockReading
+    @Published private var networkPathConfirmed = false
     @Published public private(set) var snapshot: Stage3AppProjection
     @Published public private(set) var settingsProviders: [Stage3ProviderProjection]
     @Published public private(set) var isManualRefreshInFlight = false
@@ -310,8 +315,12 @@ public final class MenuPanelViewModel: ObservableObject {
 
     public init(
         snapshot: Stage3AppProjection,
-        settingsProviders: [Stage3ProviderProjection]? = nil
+        settingsProviders: [Stage3ProviderProjection]? = nil,
+        networkClock: @escaping () -> ClockReading = {
+            .init(wallTime: Date(), monotonicTime: .init(nanoseconds: DispatchTime.now().uptimeNanoseconds))
+        }
     ) {
+        self.networkClock = networkClock
         let fullSettings = (settingsProviders ?? snapshot.providers)
             .sorted { $0.id.canonicalOrder < $1.id.canonicalOrder }
         self.settingsProviders = fullSettings
@@ -543,6 +552,11 @@ public final class MenuPanelViewModel: ObservableObject {
         larkQuotaAlertChannelStatus = .notChecked
     }
 
+    public func loadSettingsStatus(for page: SettingsPage) async {
+        guard page == .general else { return }
+        await loadLarkQuotaAlertChannelStatus()
+    }
+
     public func loadLarkQuotaAlertChannelStatus() async {
         guard larkQuotaAlertChannelStatus != .checking else { return }
         guard let onLoadLarkQuotaAlertChannelStatus else {
@@ -666,9 +680,10 @@ public final class MenuPanelViewModel: ObservableObject {
     /// connected-network state rather than from an interface name or sort order.
     public var networkObservationResolution: NetworkObservationResolution {
         NetworkObservationPointResolver.resolve(
-            path: networkSystemPathUpdatedAt.map { Date().timeIntervalSince($0) > 15 } == true ? .unreadable : networkSystemPath,
+            path: networkPathCache.path(at: networkClock()),
             manualSelection: userSelectedNetworkInterface,
-            observedInterfaces: Set(networkSnapshot.map { Array($0.interfaces.keys) } ?? [])
+            isObserving: networkSnapshot.map { $0.collectionState != .stopped } ?? false,
+            presence: { networkSnapshot?.presence(of: $0) ?? .notObserved }
         )
     }
 
@@ -684,7 +699,7 @@ public final class MenuPanelViewModel: ObservableObject {
     /// "Wi-Fi（en0）" when the system published a name, the bare BSD name when
     /// it did not, and never a friendly label that was inferred from a prefix.
     public var networkObservationLabel: String {
-        guard case let .resolved(point) = networkObservationResolution else { return "" }
+        guard case let .resolved(point) = networkObservationResolution else { return userSelectedNetworkInterface ?? "" }
         guard let display = point.displayName else { return point.interfaceName }
         return "\(display)（\(point.interfaceName)）"
     }
@@ -695,6 +710,15 @@ public final class MenuPanelViewModel: ObservableObject {
         NetworkObservationPointResolver.advancedGroups(
             interfaces: networkSnapshot?.interfaces ?? [:]
         )
+    }
+
+    public func networkInterfaceOptionTitle(_ name: String) -> String {
+        switch networkSnapshot?.presence(of: name) ?? .notObserved {
+        case .present: return name
+        case .missing: return "\(name) · 已消失"
+        case .unknown: return "\(name) · 存在状态未知"
+        case .notObserved: return "\(name) · 未观察"
+        }
     }
 
     /// Picker value: the empty string means "follow the system's active
@@ -717,6 +741,10 @@ public final class MenuPanelViewModel: ObservableObject {
             case .manuallySelected:
                 return String(localized: "手动选择 · 切换网络时不会跟随")
             }
+        case let .presenceUnknown(name):
+            return "\(networkObservationIsAutomatic ? "自动" : "手动选择") · \(name) 存在状态未知 · 数值显示为未知"
+        case let .notObserved(name):
+            return "\(name ?? "当前网络") · 未观察 · 启用采集后确认"
         case let .manualUnavailable(name):
             return String(localized: "手动选择的 \(name) 已消失 · 数值显示为未知")
         case let .notSampled(name):
@@ -732,13 +760,35 @@ public final class MenuPanelViewModel: ObservableObject {
         userSelectedNetworkInterface = nil
     }
 
-    /// Only a readable answer replaces the previous one. "Could not read" is
-    /// not evidence that the network changed, and treating it as such would
-    /// blank the page on a transient failure.
-    public func setNetworkSystemPath(_ path: NetworkSystemPath, at date: Date = Date()) {
-        guard path.isReadable else { return }
-        networkSystemPath = path
-        networkSystemPathUpdatedAt = date
+    public func setNetworkSystemPath(_ path: NetworkSystemPath, at date: Date? = nil) {
+        let reading = networkClock()
+        networkPathCache.record(path, at: .init(wallTime: date ?? reading.wallTime, monotonicTime: reading.monotonicTime))
+        networkSystemPath = networkPathCache.retainedPath
+        networkSystemPathUpdatedAt = networkPathCache.lastConfirmation?.wallTime
+        tickNetworkPathFreshness()
+    }
+
+    public func refreshNetworkSystemPath(using reader: any NetworkPathProviding) {
+        guard networkPathCache.shouldRead(at: networkClock()) else { return }
+        setNetworkSystemPath(reader.currentPath())
+    }
+
+    public func invalidateNetworkSystemPath() {
+        networkPathCache.invalidate()
+        tickNetworkPathFreshness()
+    }
+
+    /// Independent settings/panel timers call this even with no source events.
+    public func tickNetworkPathFreshness() {
+        let fresh = networkPathCache.isFresh(at: networkClock())
+        if networkPathConfirmed != fresh { networkPathConfirmed = fresh }
+    }
+
+    public var settingsSourceDisclosure: String {
+        #if USAGE_BUTLER_FIXTURES
+        if isFixtureMode { return "演示数据 · 非本机采集" }
+        #endif
+        return "本机运行时 · 只读"
     }
 
     /// The exact points the trend chart will draw for one window. Exposed so
@@ -748,14 +798,15 @@ public final class MenuPanelViewModel: ObservableObject {
         now: Date,
         window: TimeInterval
     ) -> NetworkChartProjection {
-        guard let name = resolvedNetworkInterfaceName else { return .empty }
-        return NetworkChartProjector.project(
-            networkRateHistory.series(for: name),
-            interface: name,
-            now: now,
-            window: window,
-            contract: NetworkChartSamplingContract()
-        )
+        networkTrendFrame(now: now, window: window).projection
+    }
+
+    public func networkTrendFrame(now: Date, window: TimeInterval) -> NetworkTrendFrame {
+        // A sticky manual selection may still inspect retained history while
+        // current values and presence remain unavailable.
+        let name = userSelectedNetworkInterface ?? resolvedNetworkInterfaceName ?? ""
+        return networkChartCache.frame(samples: networkRateHistory.series(for: name),
+            revision: networkHistoryRevision, interface: name, now: now, window: window)
     }
 
     /// Applies one complete replacement snapshot: the projection replaces the
@@ -765,12 +816,16 @@ public final class MenuPanelViewModel: ObservableObject {
         networkSnapshot = snapshot
         #if USAGE_BUTLER_FIXTURES
         if isFixtureMode {
-            networkSystemPath = NetworkFixtureCatalog.systemPath
-            networkSystemPathUpdatedAt = Date()
+            setNetworkSystemPath(NetworkFixtureCatalog.systemPath)
         }
         #endif
-        networkRateHistory.record(snapshot)
-        networkRateHistory.prune(keeping: Set(snapshot.interfaces.keys))
+        var history = networkRateHistory
+        history.record(snapshot)
+        history.prune(keeping: Set(snapshot.interfaces.keys))
+        if history != networkRateHistory {
+            networkHistoryRevision &+= 1
+            networkRateHistory = history
+        }
     }
 
     public func setNetworkCollectionEnabled(_ enabled: Bool) {

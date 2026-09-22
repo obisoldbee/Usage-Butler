@@ -16,8 +16,9 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
     /// recording one.
     public private(set) var republishedSampleCount: Int = 0
 
-    public init(capacity: Int = NetworkRateHistoryBuffer.defaultCapacity) {
+    public init(capacity: Int = NetworkRateHistoryBuffer.defaultCapacity, series: [String: [NetworkRateSample]] = [:]) {
         self.capacity = max(1, capacity)
+        samples = series.mapValues { Array($0.suffix(max(1, capacity))) }
     }
 
     public var count: Int { samples.values.reduce(0) { $0 + $1.count } }
@@ -34,7 +35,9 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
     /// fixture snapshots without a batch use the same source-identity gate.
     public mutating func record(_ snapshot: NetworkSnapshot) {
         if let history = snapshot.rateHistory {
-            samples = history.mapValues { Array($0.suffix(capacity)) }
+            samples = history.mapValues { series in
+                Self.identifyingContinuity(Array(series.suffix(capacity)))
+            }
             return
         }
         for (name, rate) in snapshot.interfaceRates {
@@ -52,13 +55,14 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
             }
             guard source.monotonicAsOf > last.sampledMonotonic else { return }
         }
-        series.append(NetworkRateSample(
+        let next = NetworkRateSample(
             captureSessionID: session, counterEpoch: source.counters.epoch,
             sampledAt: source.asOf, sampledMonotonic: source.monotonicAsOf,
             uploadBytesPerSecond: rate?.uploadBytesPerSecond,
             downloadBytesPerSecond: rate?.downloadBytesPerSecond,
             interfaceName: source.name, samplingInterval: source.samplingInterval
-        ))
+        )
+        series.append(Self.identify(next, after: series.last))
         // Time and point limits both apply, including when the source is faster
         // or slower than 1 Hz. Monotonic retention ignores wall-clock changes.
         let cutoff = source.monotonicAsOf.nanoseconds > 7_200_000_000_000
@@ -66,6 +70,26 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
         series.removeAll { $0.captureSessionID == session && $0.sampledMonotonic.nanoseconds < cutoff }
         if series.count > capacity { series.removeFirst(series.count - capacity) }
         samples[source.name] = series
+    }
+
+    /// Source-owned IDs carry through subsequent windows and bounded trims.
+    public static func identifyingContinuity(_ series: [NetworkRateSample]) -> [NetworkRateSample] {
+        var result: [NetworkRateSample] = []
+        for sample in series { result.append(identify(sample, after: result.last)) }
+        return result
+    }
+
+    private static func identify(_ sample: NetworkRateSample, after previous: NetworkRateSample?) -> NetworkRateSample {
+        func id(_ direction: NetworkChartDirection) -> String? {
+            let value = direction == .upload ? sample.uploadBytesPerSecond : sample.downloadBytesPerSecond
+            guard value != nil else { return nil }
+            let supplied = direction == .upload ? sample.uploadContinuityID : sample.downloadContinuityID
+            if let previous, NetworkChartProjector.areContinuous(previous, sample, direction: direction) {
+                return supplied ?? (direction == .upload ? previous.uploadContinuityID : previous.downloadContinuityID) ?? sample.sampleID
+            }
+            return supplied ?? sample.sampleID
+        }
+        return sample.withContinuity(upload: id(.upload), download: id(.download))
     }
 
     public func series(for interface: String) -> [NetworkRateSample] {

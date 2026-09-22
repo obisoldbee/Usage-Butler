@@ -1,6 +1,9 @@
 import AppKit
 import SwiftUI
 import UsageButlerUI
+#if USAGE_BUTLER_FIXTURES
+import UsageButlerCore
+#endif
 
 @MainActor
 final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
@@ -30,6 +33,12 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.appearance = NSAppearance(named: .darkAqua)
             }
         }
+        #if USAGE_BUTLER_FIXTURES
+        if CommandLine.arguments.contains("--network-zero-preview"), runtime.launchMode == .offlineFixture {
+            runtime.menuModel.applyNetworkSnapshot(NetworkFixtureCatalog.snapshot(zeroRates: true))
+            runtime.menuModel.networkObservationSelection = "en0"
+        }
+        #endif
         NetworkCurveValidation.startIfRequested(runtime: runtime, panel: controller)
         #endif
     }

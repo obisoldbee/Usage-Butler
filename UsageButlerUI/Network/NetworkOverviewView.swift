@@ -38,45 +38,30 @@ enum NetworkPresentation {
 struct NetworkOverviewView: View {
     @ObservedObject var model: MenuPanelViewModel
     let onOpenSettingsFallback: () -> Void
-    @State private var inspectedAt: Date?
-    @State private var pinned = false
-    @State private var chartFocused = false
-    @State private var uploadAxis = NetworkChartAxis()
-    @State private var downloadAxis = NetworkChartAxis()
-
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = context.date
             let name = model.resolvedNetworkInterfaceName
             let source = name.flatMap { model.networkSnapshot?.interfaces[$0] }
             let rate = name.flatMap { model.networkSnapshot?.interfaceRates[$0] }
-            let samples = (name.map { model.networkRateHistory.series(for: $0) } ?? []).filter {
-                $0.sampledAt > now.addingTimeInterval(-model.networkTrendRange.duration) && $0.sampledAt <= now
-            }
-            let projection = model.networkTrendProjection(now: now, window: model.networkTrendRange.duration)
+            let frame = model.networkTrendFrame(now: now, window: model.networkTrendRange.duration)
             let stale = NetworkStatusRules.ratesAreStale(model.networkSnapshot, interface: name, now: now)
             VStack(alignment: .leading, spacing: 12) {
-                status(now: now, name: name, samples: samples)
+                status(now: now, name: name, samples: frame.samples)
                 observationSummary
-                trend(now: now, source: source, rate: rate, samples: samples, projection: projection, stale: stale)
+                NetworkTrendView(range: $model.networkTrendRange, frame: frame, source: source, rate: rate, stale: stale, interface: model.userSelectedNetworkInterface ?? name)
                 #if USAGE_BUTLER_FIXTURES
                 if model.isFixtureMode { NetworkDemoApplicationsView() } else { unavailableApps }
                 #else
                 unavailableApps
                 #endif
             }
-            .onChange(of: model.networkTrendRange) { _ in resetAxes() }
-            .onChange(of: name) { _ in resetAxes() }
+            .onChange(of: now) { _ in model.tickNetworkPathFreshness() }
         }
         .transaction { transaction in
             transaction.animation = nil
             transaction.disablesAnimations = true
         }
-    }
-
-    private func resetAxes() {
-        uploadAxis = NetworkChartAxis(); downloadAxis = NetworkChartAxis()
-        inspectedAt = nil; pinned = false
     }
 
     private func status(now: Date, name: String?, samples: [NetworkRateSample]) -> some View {
@@ -120,27 +105,59 @@ struct NetworkOverviewView: View {
         }.padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9))
     }
 
+    private var unavailableApps: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label("按应用统计尚未接入", systemImage: "shield.lefthalf.filled").font(.subheadline.weight(.semibold))
+            Text("当前只能观察单个接口；应用、目标与连接阻断不可用。").font(.caption).foregroundStyle(.secondary)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct NetworkTrendView: View {
+    @Binding var range: NetworkTrendRange
+    let frame: NetworkTrendFrame
+    let source: InterfaceCounters?
+    let rate: NetworkRate?
+    let stale: Bool
+    let interface: String?
+    @StateObject private var inspection = NetworkInspectionState()
+    @State private var uploadAxis = NetworkChartAxis()
+    @State private var downloadAxis = NetworkChartAxis()
+
+
+    var body: some View {
+        trend(now: frame.now, source: source, rate: rate, samples: frame.samples, projection: frame.projection, stale: stale)
+            .onChange(of: range) { _ in resetAxes() }
+            .onChange(of: interface) { _ in resetAxes() }
+    }
+
+    private func resetAxes() {
+        uploadAxis = NetworkChartAxis(); downloadAxis = NetworkChartAxis()
+        inspection.inspectedAt = nil; inspection.pinned = false
+    }
+
     private func trend(now: Date, source: InterfaceCounters?, rate: NetworkRate?, samples: [NetworkRateSample], projection: NetworkChartProjection, stale: Bool) -> some View {
-        let uploadPeak = samples.compactMap(\.uploadBytesPerSecond).max() ?? 0
-        let downloadPeak = samples.compactMap(\.downloadBytesPerSecond).max() ?? 0
+        let uploadPeak = frame.uploadPeak
+        let downloadPeak = frame.downloadPeak
         return VStack(alignment: .leading, spacing: 10) {
             Text("流量趋势").font(.subheadline.weight(.semibold))
             HStack(spacing: 3) {
-                ForEach(NetworkTrendRange.allCases) { range in
-                    Button { model.networkTrendRange = range } label: {
-                        Text(range.title).font(.system(size: 11)).frame(maxWidth: .infinity, minHeight: 32)
-                            .background(model.networkTrendRange == range ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                            .foregroundStyle(model.networkTrendRange == range ? Color.white : Color.primary)
+                ForEach(NetworkTrendRange.allCases) { option in
+                    Button { range = option } label: {
+                        Text(option.title).font(.system(size: 11)).frame(maxWidth: .infinity, minHeight: 32)
+                            .background(range == option ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                            .foregroundStyle(range == option ? Color.white : Color.primary)
                             // Plain buttons otherwise only hit-test the text in an unselected cell.
                             .contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityIdentifier("network.range.\(range.rawValue)")
-                        .accessibilityAddTraits(model.networkTrendRange == range ? .isSelected : [])
+                    }.buttonStyle(.plain).accessibilityIdentifier("network.range.\(option.rawValue)")
+                        .accessibilityAddTraits(range == option ? .isSelected : [])
                 }
             }.padding(3).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
-            direction(.upload, now: now, points: projection.points(.upload), current: stale ? nil : rate?.uploadBytesPerSecond,
+            direction(.upload, now: now, points: frame.uploadPoints, current: stale ? nil : rate?.uploadBytesPerSecond,
                       total: source?.sessionTotal?.upload, peak: uploadPeak, bound: uploadAxis.upperBound, samples: samples)
             Divider()
-            direction(.download, now: now, points: projection.points(.download), current: stale ? nil : rate?.downloadBytesPerSecond,
+            direction(.download, now: now, points: frame.downloadPoints, current: stale ? nil : rate?.downloadBytesPerSecond,
                       total: source?.sessionTotal?.download, peak: downloadPeak, bound: downloadAxis.upperBound, samples: samples)
             Text(inspectionText(samples: samples))
                 .font(.caption).monospacedDigit().foregroundStyle(.secondary)
@@ -150,27 +167,27 @@ struct NetworkOverviewView: View {
         }
         .padding(12).background(.background, in: RoundedRectangle(cornerRadius: 12))
         .overlay { RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.55)).allowsHitTesting(false) }
-        .background(NetworkChartKeyboard(focused: $chartFocused, onKey: { key in inspect(key: key, samples: samples) }))
+        .background(NetworkChartKeyboard(focused: $inspection.chartFocused, onKey: { key in inspect(key: key, samples: samples) }))
         .onAppear { updateAxes(upload: uploadPeak, download: downloadPeak) }
         .onChange(of: now) { _ in updateAxes(upload: uploadPeak, download: downloadPeak) }
     }
 
     private func inspectionText(samples: [NetworkRateSample]) -> String {
-        guard let inspectedAt else { return String(localized: "指向曲线查看速率，点击可固定读数") }
-        let sample = NetworkChartInspection.sample(at: inspectedAt, in: samples)
+        guard let inspectedAt = inspection.inspectedAt else { return String(localized: "指向曲线查看速率，点击可固定读数") }
+        let sample = frame.inspection.sample(at: inspectedAt)
         return "\(inspectedAt.formatted(date: .omitted, time: .standard)) · ↑ \(NetworkPresentation.rate(sample?.uploadBytesPerSecond)) · ↓ \(NetworkPresentation.rate(sample?.downloadBytesPerSecond))"
     }
 
-    private func updateAxes(upload: Double, download: Double) {
+    private func updateAxes(upload: Double?, download: Double?) {
         let uptime = ProcessInfo.processInfo.systemUptime
-        uploadAxis.update(peak: upload, monotonicNow: uptime)
-        downloadAxis.update(peak: download, monotonicNow: uptime)
+        uploadAxis.update(peak: upload ?? 0, monotonicNow: uptime)
+        downloadAxis.update(peak: download ?? 0, monotonicNow: uptime)
     }
 
-    private func direction(_ direction: NetworkChartDirection, now: Date, points: [NetworkChartPoint], current: Double?, total: DirectionByteTotal?, peak: Double, bound: Double, samples: [NetworkRateSample]) -> some View {
+    private func direction(_ direction: NetworkChartDirection, now: Date, points: [NetworkChartPoint], current: Double?, total: DirectionByteTotal?, peak: Double?, bound: Double, samples: [NetworkRateSample]) -> some View {
         let color = direction == .upload ? NetworkPresentation.uploadColor : NetworkPresentation.downloadColor
         let title = direction == .upload ? "上传" : "下载"
-        let safeBound = max(bound, NetworkChartAxis.ceiling(for: peak))
+        let safeBound = max(bound, NetworkChartAxis.ceiling(for: peak ?? 0))
         return VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 3) {
@@ -181,50 +198,13 @@ struct NetworkOverviewView: View {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 3) {
                     Text("所选范围峰值").foregroundStyle(.secondary)
-                    Text(NetworkPresentation.rate(points.isEmpty ? nil : peak)).monospacedDigit()
+                    Text(NetworkPresentation.rate(peak)).monospacedDigit()
                 }.font(.caption)
             }
             Text(totalText(total)).font(.caption2).foregroundStyle(.secondary)
-            Chart {
-                ForEach(points) { point in
-                    AreaMark(x: .value("时间", point.at), yStart: .value("零", 0), yEnd: .value("速率", point.value), series: .value("段", point.seriesKey))
-                        .foregroundStyle(color.opacity(0.09)).interpolationMethod(.linear)
-                    LineMark(x: .value("时间", point.at), y: .value("速率", point.value), series: .value("段", point.seriesKey))
-                        .foregroundStyle(color).interpolationMethod(.linear).lineStyle(.init(lineWidth: 1.5))
-                    if point.isIsolated {
-                        PointMark(x: .value("时间", point.at), y: .value("速率", point.value)).foregroundStyle(color).symbolSize(20)
-                    }
-                }
-                if let inspectedAt { RuleMark(x: .value("查看时间", inspectedAt)).foregroundStyle(.secondary.opacity(0.5)) }
-            }
-            .chartLegend(.hidden)
-            .chartXScale(domain: now.addingTimeInterval(-model.networkTrendRange.duration)...now)
-            .chartYScale(domain: 0...safeBound)
-            .chartYAxis {
-                AxisMarks(position: .leading, values: [0, safeBound / 2, safeBound]) { value in
-                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
-                    AxisValueLabel { if let rate = value.as(Double.self) { Text(NetworkPresentation.rate(rate)).font(.system(size: 9)).frame(width: 74, alignment: .trailing) } }
-                }
-            }
-            .chartXAxis {
-                AxisMarks(values: [now.addingTimeInterval(-model.networkTrendRange.duration), now.addingTimeInterval(-model.networkTrendRange.duration / 2), now]) {
-                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
-                    AxisValueLabel(format: .dateTime.hour().minute(), centered: false)
-                }
-            }
-            .chartOverlay { proxy in
-                GeometryReader { geometry in
-                    Rectangle().fill(Color.clear).contentShape(Rectangle())
-                        .onContinuousHover { phase in
-                            guard !pinned else { return }
-                            switch phase {
-                            case let .active(point): inspectedAt = proxy.value(atX: point.x - geometry[proxy.plotAreaFrame].minX)
-                            case .ended: inspectedAt = nil
-                            }
-                        }
-                        .onTapGesture { pinned.toggle(); chartFocused = true; if inspectedAt == nil { inspectedAt = samples.last?.sampledAt } }
-                }
-            }
+            NetworkPlotView(points: points, direction: direction, now: now, window: range.duration,
+                safeBound: safeBound, inspection: inspection, lastSample: samples.last?.sampledAt)
+                .equatable()
             .frame(height: 112)
             .overlay { if points.isEmpty { Text("暂无已知速率 · 未采样区间留空").font(.caption2).foregroundStyle(.secondary) } }
             .accessibilityLabel("\(title)趋势，单位字节每秒，独立纵轴")
@@ -240,32 +220,113 @@ struct NetworkOverviewView: View {
     }
 
     private func inspect(key: UInt16, samples: [NetworkRateSample]) -> Bool {
+        if key == 53 {
+            inspection.inspectedAt = nil; inspection.pinned = false; inspection.chartFocused = false
+            return true
+        }
         guard !samples.isEmpty else { return false }
         let times = samples.map(\.sampledAt)
-        let index = inspectedAt.flatMap { at in times.enumerated().min(by: { abs($0.element.timeIntervalSince(at)) < abs($1.element.timeIntervalSince(at)) })?.offset } ?? times.count - 1
+        let index = inspection.inspectedAt.flatMap { at in times.enumerated().min(by: { abs($0.element.timeIntervalSince(at)) < abs($1.element.timeIntervalSince(at)) })?.offset } ?? times.count - 1
         switch key {
-        case 123, 125: inspectedAt = times[max(0, index - 1)]
-        case 124, 126: inspectedAt = times[min(times.count - 1, index + 1)]
-        case 115: inspectedAt = times.first
-        case 119: inspectedAt = times.last
-        case 53: inspectedAt = nil; pinned = false; chartFocused = false; return true
-        case 49: pinned.toggle(); return true
+        case 123, 125: inspection.inspectedAt = times[max(0, index - 1)]
+        case 124, 126: inspection.inspectedAt = times[min(times.count - 1, index + 1)]
+        case 115: inspection.inspectedAt = times.first
+        case 119: inspection.inspectedAt = times.last
+        case 49: inspection.pinned.toggle(); return true
         default: return false
         }
-        pinned = true
+        inspection.pinned = true
         return true
     }
 
-    private var unavailableApps: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Label("按应用统计尚未接入", systemImage: "shield.lefthalf.filled").font(.subheadline.weight(.semibold))
-            Text("当前只能观察单个接口；应用、目标与连接阻断不可用。").font(.caption).foregroundStyle(.secondary)
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
-            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+}
+
+@MainActor
+private final class NetworkInspectionState: ObservableObject {
+    @Published var inspectedAt: Date?
+    @Published var pinned = false
+    @Published var chartFocused = false
+}
+
+/// Cursor changes invalidate only the overlay and readout. Swift Charts keeps
+/// its mark tree until the data, moving window, direction or axis changes.
+private struct NetworkPlotView: View, Equatable {
+    let points: [NetworkChartPoint]
+    let direction: NetworkChartDirection
+    let now: Date
+    let window: TimeInterval
+    let safeBound: Double
+    let inspection: NetworkInspectionState
+    let lastSample: Date?
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.now == rhs.now && lhs.window == rhs.window && lhs.safeBound == rhs.safeBound
+            && lhs.direction == rhs.direction && lhs.points == rhs.points
+            && lhs.inspection === rhs.inspection && lhs.lastSample == rhs.lastSample
+    }
+    var body: some View {
+        let color = direction == .upload ? NetworkPresentation.uploadColor : NetworkPresentation.downloadColor
+            Chart {
+                ForEach(points) { point in
+                    AreaMark(x: .value("时间", point.at), yStart: .value("零", 0), yEnd: .value("速率", point.value), series: .value("段", point.seriesKey))
+                        .foregroundStyle(color.opacity(0.09)).interpolationMethod(.linear)
+                    LineMark(x: .value("时间", point.at), y: .value("速率", point.value), series: .value("段", point.seriesKey))
+                        .foregroundStyle(color).interpolationMethod(.linear).lineStyle(.init(lineWidth: 1.5))
+                    if point.isIsolated {
+                        PointMark(x: .value("时间", point.at), y: .value("速率", point.value)).foregroundStyle(color).symbolSize(20)
+                    }
+                }
+            }
+            .chartLegend(.hidden)
+            .chartXScale(domain: now.addingTimeInterval(-window)...now)
+            .chartYScale(domain: 0...safeBound)
+            .chartYAxis {
+                AxisMarks(position: .leading, values: [0, safeBound / 2, safeBound]) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                    AxisValueLabel { if let rate = value.as(Double.self) { Text(NetworkPresentation.rate(rate)).font(.system(size: 9)).frame(width: 74, alignment: .trailing) } }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: [now.addingTimeInterval(-window), now.addingTimeInterval(-window / 2), now]) {
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
+                    AxisValueLabel(format: .dateTime.hour().minute(), centered: false)
+                }
+            }
+            .chartOverlay { proxy in
+                NetworkInspectionOverlay(proxy: proxy, inspection: inspection, lastSample: lastSample)
+            }
     }
 }
 
-private struct NetworkChartKeyboard: NSViewRepresentable {
+private struct NetworkInspectionOverlay: View {
+    let proxy: ChartProxy
+    @ObservedObject var inspection: NetworkInspectionState
+    let lastSample: Date?
+    var body: some View {
+        GeometryReader { geometry in
+            let plot = geometry[proxy.plotAreaFrame]
+            ZStack(alignment: .topLeading) {
+                if let at = inspection.inspectedAt, let x = proxy.position(forX: at), x >= 0, x <= plot.width {
+                    Rectangle().fill(.secondary.opacity(0.5)).frame(width: 1, height: plot.height)
+                        .offset(x: plot.minX + x, y: plot.minY).allowsHitTesting(false)
+                }
+                Rectangle().fill(Color.clear).contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        guard !inspection.pinned else { return }
+                        switch phase {
+                        case let .active(point): inspection.inspectedAt = proxy.value(atX: point.x - plot.minX)
+                        case .ended: inspection.inspectedAt = nil
+                        }
+                    }
+                    .onTapGesture {
+                        inspection.pinned.toggle(); inspection.chartFocused = true
+                        if inspection.inspectedAt == nil { inspection.inspectedAt = lastSample }
+                    }
+            }
+        }
+    }
+}
+
+struct NetworkChartKeyboard: NSViewRepresentable {
     @Binding var focused: Bool
     var onKey: (UInt16) -> Bool
     func makeNSView(context: Context) -> KeyView { KeyView() }
@@ -283,7 +344,12 @@ private struct NetworkChartKeyboard: NSViewRepresentable {
         }
         override var acceptsFirstResponder: Bool { true }
         override func keyDown(with event: NSEvent) {
-            if onKey?(event.keyCode) != true { super.keyDown(with: event) }
+            guard event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+                  onKey?(event.keyCode) == true else { super.keyDown(with: event); return }
+            // Clearing the SwiftUI flag alone leaves this native view as first
+            // responder. Release it at the Escape event boundary so bare Tab
+            // can return to the panel's page routing.
+            if event.keyCode == 53 { window?.makeFirstResponder(nil) }
         }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }

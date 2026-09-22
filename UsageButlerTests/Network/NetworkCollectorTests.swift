@@ -194,7 +194,7 @@ final class NetworkCollectorTests: XCTestCase {
 
     private func makeCollector(
         clock: TestClock,
-        store: FakeSettingsStore,
+        store: any NetworkSettingsStore,
         factory: SourceFactoryBox
     ) -> NetworkCollector {
         NetworkCollector(
@@ -417,7 +417,9 @@ final class NetworkCollectorTests: XCTestCase {
         }
         XCTAssertEqual(stopped.collectionState, .stopped)
         XCTAssertEqual(stopped.sessionID.rawValue, "inactive")
-        XCTAssertTrue(stopped.interfaces.isEmpty)
+        // Stopping retains bounded history, but never asserts current presence.
+        XCTAssertEqual(stopped.presence(of: "en0"), .notObserved)
+        XCTAssertTrue(stopped.interfaceRates.isEmpty)
         XCTAssertTrue(stopped.apps.isEmpty)
         XCTAssertEqual(stopped.coverage.bytes, .unavailable(reason: "collection-stopped"))
     }
@@ -508,4 +510,201 @@ final class NetworkCollectorTests: XCTestCase {
             return XCTFail("second subscriber stopped receiving frames after resubscribing")
         }
     }
+    /// Explicit continuation boundaries on the real collector's injected ports.
+    private actor Gate {
+        private var arrived = false
+        private var opened = false
+        private var pending: CheckedContinuation<Void, Never>?
+        private var observers: [CheckedContinuation<Void, Never>] = []
+        func enter() async {
+            arrived = true
+            observers.forEach { $0.resume() }; observers.removeAll()
+            if !opened { await withCheckedContinuation { pending = $0 } }
+        }
+        func wait() async {
+            if !arrived { await withCheckedContinuation { observers.append($0) } }
+        }
+        func open() { opened = true; pending?.resume(); pending = nil }
+    }
+
+    private actor PausedStore: NetworkSettingsStore {
+        let loadGate: Gate?
+        let saveGate: Gate?
+        var persisted: NetworkSettings
+        private(set) var writes: [Bool] = []
+        let fails: Bool
+        init(enabled: Bool = false, load: Gate? = nil, save: Gate? = nil, fails: Bool = false) {
+            persisted = NetworkSettings(collectionEnabled: enabled)
+            loadGate = load; saveGate = save; self.fails = fails
+        }
+        func load() async -> Result<NetworkSettings, NetworkStoreFailure> {
+            let captured = persisted
+            await loadGate?.enter()
+            return .success(captured)
+        }
+        func save(_ settings: NetworkSettings) async -> Result<Void, NetworkStoreFailure> {
+            await saveGate?.enter()
+            if fails { return .failure(.io) }
+            persisted = settings; writes.append(settings.collectionEnabled)
+            return .success(())
+        }
+    }
+
+    func testPausedStartupLoadCannotResurrectAfterStop() async {
+        let gate = Gate()
+        let store = PausedStore(enabled: true, load: gate)
+        let factory = SourceFactoryBox()
+        let collector = makeCollector(clock: TestClock(), store: store, factory: factory)
+        let startup = Task { await collector.start() }
+        await gate.wait()
+        await collector.stop()
+        await gate.open()
+        await startup.value
+        let state = await collector.collectionStateNow()
+        XCTAssertEqual(state, .stopped)
+        XCTAssertEqual(factory.count, 0)
+        await collector.stop()
+    }
+
+    func testPausedEnableSaveCannotResurrectAfterStop() async {
+        let gate = Gate()
+        let store = PausedStore(save: gate)
+        let factory = SourceFactoryBox()
+        let collector = makeCollector(clock: TestClock(), store: store, factory: factory)
+        await collector.start()
+        let enable = Task { await collector.setCollectionEnabled(true) }
+        await gate.wait()
+        await collector.stop()
+        let countAtStop = factory.count
+        await gate.open()
+        await enable.value
+        let state = await collector.collectionStateNow()
+        XCTAssertEqual(state, .stopped)
+        XCTAssertEqual(factory.count, countAtStop)
+        await collector.stop()
+    }
+
+    func testDisableStopsBeforeItsSaveCompletesEvenWhenSaveFails() async {
+        let gate = Gate()
+        let store = PausedStore(enabled: true, save: gate, fails: true)
+        let factory = SourceFactoryBox()
+        let collector = makeCollector(clock: TestClock(), store: store, factory: factory)
+        await collector.start()
+        let disable = Task { await collector.setCollectionEnabled(false) }
+        await gate.wait()
+        let whileSaving = await collector.collectionStateNow()
+        XCTAssertEqual(whileSaving, .stopped)
+        await gate.open()
+        await disable.value
+        let after = await collector.collectionStateNow()
+        XCTAssertEqual(after, .stopped)
+        await collector.stop()
+    }
+
+    func testNewDisableIsPersistedAfterPausedOldEnable() async {
+        let gate = Gate(), clock = TestClock()
+        let store = PausedStore(save: gate)
+        let factory = SourceFactoryBox()
+        let collector = makeCollector(clock: clock, store: store, factory: factory)
+        await collector.start()
+        await clock.waitUntilSleepIsRegistered(until: .init(nanoseconds: 5_000_000_000))
+        let enable = Task { await collector.setCollectionEnabled(true) }
+        await gate.wait()
+        await clock.blockNextReading()
+        let disable = Task { await collector.setCollectionEnabled(false) }
+        await clock.waitUntilReadingIsBlocked()
+        let state = await collector.collectionStateNow()
+        XCTAssertEqual(state, .stopped, "accepted disable wins before either save can complete")
+        await clock.resumeReading()
+        await gate.open()
+        await enable.value; await disable.value
+        await collector.flushSettings()
+        let writes = await store.writes
+        let persisted = await store.persisted
+        XCTAssertEqual(writes, [true, false])
+        XCTAssertFalse(persisted.collectionEnabled)
+        let final = await collector.collectionStateNow()
+        XCTAssertEqual(final, .stopped)
+        await collector.stop()
+    }
+
+    func testPrestartIntentAndRepeatedStartStopAndQueuedWork() async {
+        let store = PausedStore()
+        let factory = SourceFactoryBox()
+        let collector = makeCollector(clock: TestClock(), store: store, factory: factory)
+        await collector.setCollectionEnabled(true)
+        XCTAssertEqual(factory.count, 0, "prestart writes intent without acquiring a source")
+        await collector.start(); await collector.start()
+        await collector.setCollectionEnabled(true)
+        XCTAssertEqual(factory.count, 1, "repeating enable does not create another owner")
+        await collector.stop(); await collector.stop()
+        await collector.updatePolicy(.panelVisible)
+        await collector.refreshNow()
+        await collector.setCollectionEnabled(true)
+        XCTAssertEqual(factory.count, 1, "late work after stop cannot start a source")
+        await collector.start()
+        XCTAssertEqual(factory.count, 2)
+        await collector.setCollectionEnabled(false)
+        await collector.setCollectionEnabled(false)
+        await collector.stop()
+        let saved = await store.persisted
+        XCTAssertFalse(saved.collectionEnabled)
+    }
+
+    func testSuspendedRefreshClockCannotPublishIntoRestartedLifecycle() async {
+        let clock = TestClock(), store = PausedStore()
+        let factory = SourceFactoryBox()
+        let collector = makeCollector(clock: clock, store: store, factory: factory)
+        await collector.start()
+        await clock.waitUntilSleepIsRegistered(until: .init(nanoseconds: 5_000_000_000))
+        await clock.blockNextReading()
+        let refresh = Task { await collector.refreshNow() }
+        await clock.waitUntilReadingIsBlocked()
+        await collector.stop()
+        await collector.start()
+        let stream = await collector.updates()
+        var iterator = stream.makeAsyncIterator()
+        _ = await iterator.next()
+        let log = SnapshotLog()
+        let drain = Task { for await snapshot in stream { await log.append(snapshot) } }
+        await clock.resumeReading()
+        await refresh.value
+        await collector.stop()
+        await drain.value
+        let count = await log.count()
+        XCTAssertEqual(count, 0, "old clock completion must not publish into the new subscription")
+    }
+
+    func testShutdownDrainsAcceptedSaveAndRejectsLateStartupAndIntent() async {
+        let gate = Gate()
+        let factory = SourceFactoryBox(), clock = TestClock()
+        let activeStore = PausedStore(save: gate)
+        let collector = makeCollector(clock: clock, store: activeStore, factory: factory)
+        await collector.start()
+        let stream = await collector.updates()
+        let drained = Task { for await _ in stream {} }
+        let enable = Task { await collector.setCollectionEnabled(true) }
+        await gate.wait()
+        let shutdown = Task { await collector.shutdown() }
+        // Finishing the real output stream is the synchronous stop boundary.
+        await drained.value
+        let state = await collector.collectionStateNow()
+        XCTAssertEqual(state, .stopped)
+        await collector.start()
+        await collector.setCollectionEnabled(false)
+        await collector.refreshNow()
+        await collector.updatePolicy(.panelVisible)
+        let pending = await activeStore.writes
+        XCTAssertTrue(pending.isEmpty, "shutdown is draining an accepted, paused save")
+        await gate.open()
+        await enable.value; await shutdown.value
+        let writes = await activeStore.writes
+        XCTAssertEqual(writes, [true], "late intent is rejected after the final shutdown boundary")
+        let lateUpdates = await collector.updates()
+        var lateIterator = lateUpdates.makeAsyncIterator()
+        let ended = await lateIterator.next()
+        XCTAssertNil(ended, "late subscribers finish at the final shutdown boundary")
+        XCTAssertEqual(factory.count, 1)
+    }
+
 }

@@ -121,11 +121,26 @@ public struct NetworkAggregator: Sendable {
     private var truncatedCollections: Set<String> = []
     private var capabilities: NetworkCapabilities = .unavailable
     private var hasLiveSample = false
+    private var inventory: NetworkInterfaceInventory?
+    private var rebaseline: [String: String] = [:]
     private var lastAppTotals: [String: TotalsSample] = [:]
 
-    public init(sessionID: CaptureSessionID, bounds: NetworkAggregationBounds = .init()) {
+    public init(sessionID: CaptureSessionID, bounds: NetworkAggregationBounds = .init(),
+                retainedInterfaces: [String: InterfaceCounters] = [:],
+                retainedHistory: [String: [NetworkRateSample]] = [:]) {
         self.sessionID = sessionID
         self.bounds = bounds
+        for name in retainedInterfaces.keys.sorted().prefix(bounds.maxInterfaces) {
+            if let sample = retainedInterfaces[name] {
+                interfaces[name] = InterfaceState(latest: sample)
+                rebaseline[name] = "capture-restarted"
+            }
+        }
+        rateHistory = NetworkRateHistoryBuffer(series: retainedHistory.filter { interfaces[$0.key] != nil })
+    }
+
+    var retainedObservation: (interfaces: [String: InterfaceCounters], history: [String: [NetworkRateSample]]) {
+        (interfaces.mapValues(\.latest), rateHistory.allSeries)
     }
 
     /// Integrity counters, surfaced for diagnostics and tests.
@@ -185,6 +200,8 @@ public struct NetworkAggregator: Sendable {
         switch event.payload {
         case let .heartbeat(newCapabilities):
             capabilities = newCapabilities
+        case let .interfaceEnumeration(result):
+            return applyEnumeration(result, envelope: envelope)
         case let .interfaceCounters(sample):
             hasLiveSample = true
             return applyInterface(sample)
@@ -206,13 +223,48 @@ public struct NetworkAggregator: Sendable {
 
     // MARK: - Event handlers
 
+    private mutating func applyEnumeration(_ result: NetworkInterfaceEnumeration, envelope: NetworkEventEnvelope) -> Bool {
+        if let previous = inventory?.envelope.monotonicOccurredAt,
+           envelope.monotonicOccurredAt <= previous { return false }
+        switch result {
+        case .failed:
+            inventory = .init(envelope: envelope, succeeded: false, names: [])
+            for name in interfaces.keys { rebaseline[name] = "enumeration-failed" }
+        case let .complete(samples):
+            let names = Set(samples.map(\.name))
+            // An invalid/truncated inventory cannot establish absence.
+            guard names.count == samples.count, names.count <= 4096,
+                  !names.contains(""), samples.allSatisfy({ $0.monotonicAsOf == envelope.monotonicOccurredAt }) else {
+                return applyEnumeration(.failed, envelope: envelope)
+            }
+            inventory = .init(envelope: envelope, succeeded: true, names: names)
+            hasLiveSample = true
+            for name in interfaces.keys where !names.contains(name) { rebaseline[name] = "interface-missing" }
+            for sample in samples { _ = applyInterface(sample) }
+        }
+        return true
+    }
+
     private mutating func applyInterface(_ sample: InterfaceCounters) -> Bool {
         if interfaces[sample.name] == nil, interfaces.count >= bounds.maxInterfaces {
-            truncatedCollections.insert("interfaces")
-            return false
+            // Retained missing names must not permanently consume live slots.
+            let candidate = interfaces.values.filter { inventory?.names.contains($0.latest.name) == false }
+                .min { $0.latest.monotonicAsOf < $1.latest.monotonicAsOf }
+            guard let name = candidate?.latest.name else {
+                truncatedCollections.insert("interfaces"); return false
+            }
+            interfaces.removeValue(forKey: name); rebaseline.removeValue(forKey: name)
+            rateHistory.prune(keeping: Set(interfaces.keys))
+            truncatedCollections.insert("interface-history")
         }
-        let existing = interfaces[sample.name]
-        if let existing, sample.monotonicAsOf <= existing.latest.monotonicAsOf { return false }
+        var existing = interfaces[sample.name]
+        if rebaseline[sample.name] != "capture-restarted",
+           let existing, sample.monotonicAsOf <= existing.latest.monotonicAsOf { return false }
+        if let old = existing?.latest.systemIdentity, let new = sample.systemIdentity, old != new {
+            rebaseline[sample.name] = "interface-identity-changed"
+        }
+        let restartReason = rebaseline.removeValue(forKey: sample.name)
+        if restartReason != nil { existing = nil }
         var upload = sample.counters.bytes.upload
         var download = sample.counters.bytes.download
         var sanitized = sample
@@ -240,6 +292,10 @@ public struct NetworkAggregator: Sendable {
 
         var settlement = existing?.settlement
             ?? InterfaceSettlement()
+        if let restartReason {
+            settlement.upload.breakReason = restartReason
+            settlement.download.breakReason = restartReason
+        }
         settle(&settlement, sample: sample)
         sanitized = sanitized.replacing(sessionTotal: settlement.value)
         interfaces[sample.name] = InterfaceState(
@@ -485,8 +541,11 @@ public struct NetworkAggregator: Sendable {
             capabilities: capabilities,
             interfaces: interfaces.mapValues(\.latest),
             apps: apps,
-            interfaceRates: interfaceRates(),
-            rateHistory: rateHistory.allSeries
+            interfaceRates: interfaceRates().filter { name, _ in
+                rebaseline[name] == nil && (inventory.map { $0.succeeded && $0.names.contains(name) } ?? true)
+            },
+            rateHistory: rateHistory.allSeries,
+            interfaceInventory: inventory
         )
     }
 

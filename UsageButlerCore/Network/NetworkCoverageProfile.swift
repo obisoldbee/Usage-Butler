@@ -97,7 +97,8 @@ extension NetworkSnapshot {
             interfaces: interfaces,
             apps: apps,
             interfaceRates: interfaceRates,
-            rateHistory: rateHistory
+            rateHistory: rateHistory,
+            interfaceInventory: interfaceInventory
         )
     }
 }

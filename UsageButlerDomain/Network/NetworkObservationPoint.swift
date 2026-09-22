@@ -57,6 +57,8 @@ public enum NetworkObservationResolution: Equatable, Sendable {
     /// choice as unavailable rather than silently switching measurement to a
     /// different interface.
     case manualUnavailable(interfaceName: String)
+    case presenceUnknown(interfaceName: String)
+    case notObserved(interfaceName: String?)
     /// The operating system's network state could not be read.
     case systemStateUnreadable
     /// The system reports no active network.

@@ -38,7 +38,6 @@ final class AppRuntime: ObservableObject {
     private var loggedProviderStates: [ProviderID: ProviderRuntimeTelemetryState] = [:]
     private var isShuttingDown = false
     private var isPanelVisible = false
-    private var networkPathLastRead: Date?
 
     init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -290,7 +289,7 @@ final class AppRuntime: ObservableObject {
             let updates = await networkCollector.updates()
             for await snapshot in updates {
                 guard !Task.isCancelled else { return }
-                self?.refreshNetworkSystemPath(reader: networkPathReader)
+                self?.menuModel.refreshNetworkSystemPath(using: networkPathReader)
                 self?.menuModel.applyNetworkSnapshot(snapshot)
             }
         })
@@ -301,10 +300,19 @@ final class AppRuntime: ObservableObject {
         let wakeTask = Task { @MainActor [weak self] in
             for await _ in wakeNotifications {
                 guard !Task.isCancelled else { return }
+                self?.menuModel.invalidateNetworkSystemPath()
+                self?.menuModel.refreshNetworkSystemPath(using: networkPathReader)
                 self?.requestLifecycleRefresh(reason: .systemWake)
             }
         }
         observationTasks.append(wakeTask)
+        let sleepNotifications = NSWorkspace.shared.notificationCenter.notifications(named: NSWorkspace.willSleepNotification)
+        observationTasks.append(Task { @MainActor [weak self] in
+            for await _ in sleepNotifications {
+                guard !Task.isCancelled else { return }
+                self?.menuModel.invalidateNetworkSystemPath()
+            }
+        })
 
         await loadMemoryHistory()
         guard !Task.isCancelled, !isShuttingDown else { return }
@@ -732,19 +740,6 @@ final class AppRuntime: ObservableObject {
         }
     }
 
-    /// Cached so the page still shows what it measured for a moment after the
-    /// system stops answering, instead of flickering to "not identified".
-    private static let networkPathReuseInterval: TimeInterval = 5
-
-    private func refreshNetworkSystemPath(reader: any NetworkPathProviding, now: Date = Date()) {
-        if let lastRead = networkPathLastRead,
-           now.timeIntervalSince(lastRead) < Self.networkPathReuseInterval {
-            return
-        }
-        networkPathLastRead = now
-        menuModel.setNetworkSystemPath(reader.currentPath(), at: now)
-    }
-
     /// Debug acceptance hook: silences the real collector so a scripted run is
     /// the only thing feeding the page, and reports what it observed. Toggling
     /// the setting alone is not enough — `start()` may still be in flight and
@@ -895,7 +890,7 @@ final class AppRuntime: ObservableObject {
         }
 
         await composition.memoryController.stop()
-        await composition.networkCollector.stop()
+        await composition.networkCollector.shutdown()
         if let store = composition.memoryHistoryStore {
             let referenceTimestamp = latestMemoryState?.latest?.timestamp ?? Date()
             let points = mergedMemoryHistory(

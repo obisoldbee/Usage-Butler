@@ -23,15 +23,17 @@ public struct NetworkChartPoint: Identifiable, Equatable, Sendable {
     /// visible dot instead of silently dropping the only evidence there was.
     public let isIsolated: Bool
 
-    public var id: String { seriesKey + "@" + at.fixedSeconds }
+    public let id: String
 
     public init(
         seriesKey: String,
         direction: NetworkChartDirection,
         at: Date,
         value: Double,
-        isIsolated: Bool
+        isIsolated: Bool,
+        sampleID: String
     ) {
+        self.id = direction.rawValue + "|" + sampleID
         self.seriesKey = seriesKey
         self.direction = direction
         self.at = at
@@ -133,8 +135,7 @@ public enum NetworkChartProjector {
         let cutoff = now.addingTimeInterval(-abs(window))
         // A fixed `now` bounds both ends of the window, so a view that reads
         // the clock twice cannot produce a self-overlapping domain.
-        let ordered = samples.filter { $0.sampledAt > cutoff && $0.sampledAt <= now }
-        let gapThreshold = contract.effectiveGapThreshold(for: ordered)
+        let gapThreshold = contract.effectiveGapThreshold(for: samples)
 
         var points: [NetworkChartPoint] = []
         var segments = 0
@@ -142,15 +143,20 @@ public enum NetworkChartProjector {
         var downsampled = 0
 
         for direction in NetworkChartDirection.allCases {
-            for run in runs(of: ordered, direction: direction, contract: contract) {
+            var usedKeys = Set<String>()
+            for completeRun in runs(of: samples, direction: direction, contract: contract) {
+                guard let origin = completeRun.first else { continue }
+                let anchor = (direction == .upload ? origin.uploadContinuityID : origin.downloadContinuityID) ?? origin.sampleID
+                let baseKey = "\(interface)|\(direction.rawValue)|\(anchor)"
+                // Malformed repeated anchors must never merge actual gaps.
+                let key = usedKeys.insert(baseKey).inserted ? baseKey : baseKey + "|" + origin.sampleID
+                let run = completeRun.filter { $0.sampledAt > cutoff && $0.sampledAt <= now }
+                guard !run.isEmpty else { continue }
                 segments += 1
                 let kept = thin(run, direction: direction, limit: max(2, maxPointsPerSegment))
                 if kept.count != run.count { downsampled += 1 }
                 let flag = kept.count == 1
                 if flag { isolated += 1 }
-                guard let first = run.first else { continue }
-                let key = "\(interface)|\(first.captureSessionID.rawValue)|"
-                    + "\(first.counterEpoch.rawValue)|\(direction.rawValue)|\(first.sampledAt.fixedSeconds)|\(first.sourceID)|\(first.sampledMonotonic.nanoseconds)"
                 for sample in kept {
                     guard let value = value(of: sample, direction: direction) else { continue }
                     points.append(NetworkChartPoint(
@@ -158,7 +164,8 @@ public enum NetworkChartProjector {
                         direction: direction,
                         at: sample.sampledAt,
                         value: value,
-                        isIsolated: flag
+                        isIsolated: flag,
+                        sampleID: sample.sampleID
                     ))
                 }
             }
@@ -170,6 +177,15 @@ public enum NetworkChartProjector {
             thinnedSegmentCount: downsampled,
             gapThreshold: gapThreshold
         )
+    }
+
+    public static func areContinuous(_ earlier: NetworkRateSample, _ later: NetworkRateSample,
+                                     direction: NetworkChartDirection,
+                                     contract: NetworkChartSamplingContract = .init()) -> Bool {
+        guard value(of: earlier, direction: direction) != nil,
+              let next = value(of: later, direction: direction), later.sampledAt > earlier.sampledAt else { return false }
+        return !breaks(before: later, after: earlier, value: next,
+                       gapThreshold: contract.threshold(between: earlier, and: later))
     }
 
     /// Contiguous same-direction stretches. A break happens on an unknown
@@ -197,8 +213,11 @@ public enum NetworkChartProjector {
                 flush()
                 continue
             }
-            if let previous = current.last, breaks(before: sample, after: previous, value: value, gapThreshold: contract.threshold(between: previous, and: sample)) {
-                flush()
+            if let previous = current.last {
+                let previousID = direction == .upload ? previous.uploadContinuityID : previous.downloadContinuityID
+                let currentID = direction == .upload ? sample.uploadContinuityID : sample.downloadContinuityID
+                if (previousID != nil && currentID != nil && previousID != currentID)
+                    || breaks(before: sample, after: previous, value: value, gapThreshold: contract.threshold(between: previous, and: sample)) { flush() }
             }
             current.append(sample)
         }
@@ -269,10 +288,4 @@ public enum NetworkChartProjector {
         }
         return run.enumerated().filter { keep.contains($0.offset) }.map(\.element)
     }
-}
-
-private extension Date {
-    /// Six decimal places keeps sub-second sample times distinct inside a
-    /// stable series key without exposing float noise.
-    var fixedSeconds: String { String(format: "%.6f", timeIntervalSince1970) }
 }

@@ -38,6 +38,16 @@ public enum NetworkSnapshotJSONCodec {
         var apps: [String: AppWire]
         var interfaceRates: [String: RateWire]
         var rateHistory: [String: [SampleWire]]?
+        var interfaceInventory: InventoryWire?
+    }
+
+    private struct InventoryWire: Codable {
+        var session: String
+        var sequence: String
+        var occurredAt: String
+        var monotonic: String
+        var succeeded: Bool
+        var names: [String]
     }
 
     private struct Tagged: Codable {
@@ -69,6 +79,7 @@ public enum NetworkSnapshotJSONCodec {
     }
 
     private struct InterfaceWire: Codable {
+        var systemIdentity: String?
         var name: String
         var kind: String
         var counters: CountersWire
@@ -98,6 +109,8 @@ public enum NetworkSnapshotJSONCodec {
     }
 
     private struct SampleWire: Codable {
+        var uploadContinuityID: String?
+        var downloadContinuityID: String?
         var source: String
         var interface: String
         var session: String
@@ -172,6 +185,7 @@ public enum NetworkSnapshotJSONCodec {
             ),
             interfaces: snapshot.interfaces.mapValues { interface in
                 InterfaceWire(
+                    systemIdentity: interface.systemIdentity,
                     name: interface.name,
                     kind: interface.kind.rawValue,
                     counters: counters(interface.counters),
@@ -197,7 +211,13 @@ public enum NetworkSnapshotJSONCodec {
                 )
             },
             interfaceRates: snapshot.interfaceRates.mapValues(rate),
-            rateHistory: snapshot.rateHistory?.mapValues { $0.map(sample) }
+            rateHistory: snapshot.rateHistory?.mapValues { $0.map(sample) },
+            interfaceInventory: snapshot.interfaceInventory.map { inventory in
+                InventoryWire(session: inventory.envelope.sessionID.rawValue,
+                    sequence: String(inventory.envelope.sequence), occurredAt: format(inventory.envelope.occurredAt),
+                    monotonic: String(inventory.envelope.monotonicOccurredAt.nanoseconds),
+                    succeeded: inventory.succeeded, names: inventory.names.sorted())
+            }
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -277,7 +297,8 @@ public enum NetworkSnapshotJSONCodec {
                     asOf: asOf,
                     monotonicAsOf: MonotonicInstant(nanoseconds: monotonic),
                     sessionTotal: try interface.sessionTotal.map { try unsessionTotal($0, version: wire.version) },
-                    samplingInterval: try cadence(interface.samplingInterval)
+                    samplingInterval: try cadence(interface.samplingInterval),
+                    systemIdentity: interface.systemIdentity
                 )
             },
             apps: try wire.apps.mapValues { app in
@@ -301,7 +322,20 @@ public enum NetworkSnapshotJSONCodec {
                 )
             },
             interfaceRates: try wire.interfaceRates.mapValues(unrate),
-            rateHistory: try wire.rateHistory?.mapValues { try $0.map(unsample) }
+            rateHistory: try wire.rateHistory?.mapValues { try $0.map(unsample) },
+            interfaceInventory: try wire.interfaceInventory.map { inventory in
+                let sequence = try uint64(inventory.sequence, field: "interfaceInventory.sequence")
+                let instant = try uint64(inventory.monotonic, field: "interfaceInventory.monotonic")
+                guard inventory.session == wire.session, sequence <= appliedSequence,
+                      let date = parse(inventory.occurredAt),
+                      inventory.names.count <= 4096, Set(inventory.names).count == inventory.names.count,
+                      !inventory.names.contains(""), inventory.succeeded || inventory.names.isEmpty else {
+                    throw NetworkSnapshotCodecFailure.invalidValue(field: "interfaceInventory")
+                }
+                return NetworkInterfaceInventory(envelope: .init(sessionID: sessionID, sequence: sequence,
+                    occurredAt: date, monotonicOccurredAt: .init(nanoseconds: instant)),
+                    succeeded: inventory.succeeded, names: Set(inventory.names))
+            }
         )
     }
 
@@ -356,7 +390,8 @@ public enum NetworkSnapshotJSONCodec {
     }
 
     private static func sample(_ sample: NetworkRateSample) -> SampleWire {
-        .init(source: sample.sourceID, interface: sample.interfaceName, session: sample.captureSessionID.rawValue,
+        .init(uploadContinuityID: sample.uploadContinuityID, downloadContinuityID: sample.downloadContinuityID,
+              source: sample.sourceID, interface: sample.interfaceName, session: sample.captureSessionID.rawValue,
               epoch: String(sample.counterEpoch.rawValue), sampledAt: format(sample.sampledAt),
               monotonic: String(sample.sampledMonotonic.nanoseconds), upload: sample.uploadBytesPerSecond,
               download: sample.downloadBytesPerSecond, samplingInterval: sample.samplingInterval)
@@ -369,7 +404,8 @@ public enum NetworkSnapshotJSONCodec {
         return .init(captureSessionID: .init(rawValue: wire.session), counterEpoch: .init(rawValue: try uint64(wire.epoch, field: "history.epoch")),
                      sampledAt: at, sampledMonotonic: .init(nanoseconds: try uint64(wire.monotonic, field: "history.monotonic")),
                      uploadBytesPerSecond: wire.upload, downloadBytesPerSecond: wire.download,
-                     sourceID: wire.source, interfaceName: wire.interface, samplingInterval: try cadence(wire.samplingInterval))
+                     sourceID: wire.source, interfaceName: wire.interface, samplingInterval: try cadence(wire.samplingInterval),
+                     uploadContinuityID: wire.uploadContinuityID, downloadContinuityID: wire.downloadContinuityID)
     }
 
     private static func uncounters(_ wire: CountersWire) throws -> NetworkByteCounters {

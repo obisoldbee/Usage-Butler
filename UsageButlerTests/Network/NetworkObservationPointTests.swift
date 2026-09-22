@@ -21,7 +21,7 @@ final class NetworkObservationPointTests: XCTestCase {
         NetworkObservationPointResolver.resolve(
             path: path,
             manualSelection: manual,
-            observedInterfaces: observed ?? self.observed
+            presence: { (observed ?? self.observed).contains($0) ? .present : .missing }
         )
     }
 

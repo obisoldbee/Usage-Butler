@@ -100,6 +100,10 @@ public enum NetworkStatusRules {
     /// label, so it stays a clause rather than a sentence.
     public static func sessionTotalReasonText(_ reason: String?) -> String {
         switch reason {
+        case "interface-missing": String(localized: "接口重新出现后重新起算")
+        case "interface-identity-changed": String(localized: "系统接口身份变化后重新起算")
+        case "enumeration-failed": String(localized: "接口读取失败后重新起算")
+        case "capture-restarted": String(localized: "重新启用采集后重新起算")
         case "counter-reset": String(localized: "计数器重置后重新起算，之前的字节无法归因")
         case "sampling-gap": String(localized: "采样中断后重新起算")
         case "missing-counter": String(localized: "缺失计数恢复后重新起算")

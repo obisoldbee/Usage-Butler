@@ -30,11 +30,11 @@ struct NetworkSettingsView: View {
                         Text("自动（推荐）").tag("")
                         ForEach(model.networkAdvancedInterfaceGroups) { group in
                             Section(NetworkPresentation.interfaceKindTitle(group.kind)) {
-                                ForEach(group.interfaces, id: \.self) { Text($0).tag($0) }
+                                ForEach(group.interfaces, id: \.self) { Text(model.networkInterfaceOptionTitle($0)).tag($0) }
                             }
                         }
-                        if case let .manualUnavailable(name) = model.networkObservationResolution {
-                            Text("\(name) · 已消失").tag(name)
+                        if let name = model.userSelectedNetworkInterface, model.networkSnapshot?.interfaces[name] == nil {
+                            Text(model.networkInterfaceOptionTitle(name)).tag(name)
                         }
                     }
                     .accessibilityIdentifier("settings.network.interfacePicker")
