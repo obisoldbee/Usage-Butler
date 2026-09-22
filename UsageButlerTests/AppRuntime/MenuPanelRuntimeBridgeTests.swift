@@ -308,6 +308,23 @@ final class MenuPanelRuntimeBridgeTests: XCTestCase {
         )
     }
 
+    func testEditingLarkConfigurationInvalidatesInFlightResult() async {
+        let model = makeModel(projections: [])
+        let started = expectation(description: "check started")
+        var release: CheckedContinuation<LarkQuotaAlertChannelStatus, Never>?
+        configureDiagnostics(model, larkStatusLoader: {
+            await withCheckedContinuation { continuation in
+                release = continuation; started.fulfill()
+            }
+        }) { .loaded([]) }
+        let task = Task { await model.loadLarkQuotaAlertChannelStatus() }
+        await fulfillment(of: [started], timeout: 2)
+        model.invalidateLarkQuotaAlertChannelStatus()
+        release?.resume(returning: .ready)
+        await task.value
+        XCTAssertEqual(model.larkQuotaAlertChannelStatus, .notChecked)
+    }
+
     func testLarkQuotaAlertChannelStatusLoadsThroughRuntimeBridge() async {
         let model = makeModel(projections: [])
         configureDiagnostics(

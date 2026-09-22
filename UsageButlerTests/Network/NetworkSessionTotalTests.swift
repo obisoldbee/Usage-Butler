@@ -89,11 +89,11 @@ final class NetworkSessionTotalTests: XCTestCase {
         // A same-epoch drop: wrap or reset, and the reading alone cannot tell.
         aggregator.apply(event(3, iface(200, 1_000, monotonicNs: 3_000_000_000, wallOffset: 3)))
         var observed = total(of: aggregator)
-        XCTAssertEqual(observed?.bytes.upload, 0, "the surviving segment has settled nothing yet")
+        XCTAssertNil(observed?.bytes.upload, "v2: reset sample is a baseline, not a measured interval")
         XCTAssertEqual(observed?.bytes.download, 0)
         XCTAssertFalse(observed?.isContinuous ?? true)
         XCTAssertEqual(observed?.breakReason, "counter-reset")
-        XCTAssertEqual(observed?.since, baseWall.addingTimeInterval(3), "the new span starts at the reset")
+        XCTAssertEqual(observed?.upload.since, baseWall.addingTimeInterval(3), "the new span starts at the reset")
 
         aggregator.apply(event(4, iface(700, 1_000, monotonicNs: 4_000_000_000)))
         observed = total(of: aggregator)
@@ -108,19 +108,19 @@ final class NetworkSessionTotalTests: XCTestCase {
         aggregator.apply(event(3, iface(6_000, 100, monotonicNs: 3_000_000_000)))
         let observed = total(of: aggregator)
         XCTAssertEqual(observed?.bytes.upload, 5_000, "upload never dropped; its bytes are still accounted for")
-        XCTAssertEqual(observed?.bytes.download, 0)
+        XCTAssertNil(observed?.bytes.download, "v2: independent reset establishes an unknown baseline")
     }
 
-    func testNewEpochReBaselinesWithoutDiscardingSettledBytes() {
+    func testNewEpochStartsANewVerifiableSegment() {
         var aggregator = NetworkAggregator(sessionID: session)
         aggregator.apply(event(1, iface(1_000, 1_000, monotonicNs: 1_000_000_000)))
         aggregator.apply(event(2, iface(4_000, 1_000, monotonicNs: 2_000_000_000)))
         aggregator.apply(event(3, iface(500, 500, monotonicNs: 3_000_000_000, epoch: 1_800_000_000)))
         let observed = total(of: aggregator)
-        XCTAssertEqual(observed?.bytes.upload, 3_000, "settled bytes were earned inside this session")
-        XCTAssertTrue(observed?.isContinuous ?? false, "an epoch bump is a new baseline, not a gap")
+        XCTAssertNil(observed?.bytes.upload, "v2 explicitly uses the current segment; earlier epochs are not merged")
+        XCTAssertFalse(observed?.isContinuous ?? true, "v2 discloses the epoch boundary")
         aggregator.apply(event(4, iface(1_500, 500, monotonicNs: 4_000_000_000, epoch: 1_800_000_000)))
-        XCTAssertEqual(total(of: aggregator)?.bytes.upload, 4_000)
+        XCTAssertEqual(total(of: aggregator)?.bytes.upload, 1_000)
     }
 
     func testMissingDirectionStaysUnknownRatherThanZero() {

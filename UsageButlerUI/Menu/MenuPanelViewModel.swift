@@ -522,6 +522,13 @@ public final class MenuPanelViewModel: ObservableObject {
         }
     }
 
+    private var larkCheckRevision: UInt64 = 0
+
+    public func invalidateLarkQuotaAlertChannelStatus() {
+        larkCheckRevision &+= 1
+        larkQuotaAlertChannelStatus = .notChecked
+    }
+
     public func loadLarkQuotaAlertChannelStatus() async {
         guard larkQuotaAlertChannelStatus != .checking else { return }
         guard let onLoadLarkQuotaAlertChannelStatus else {
@@ -529,8 +536,11 @@ public final class MenuPanelViewModel: ObservableObject {
             return
         }
 
+        let revision = larkCheckRevision
         larkQuotaAlertChannelStatus = .checking
-        larkQuotaAlertChannelStatus = await onLoadLarkQuotaAlertChannelStatus()
+        let result = await onLoadLarkQuotaAlertChannelStatus()
+        guard revision == larkCheckRevision else { return }
+        larkQuotaAlertChannelStatus = result
     }
 
     public func isProductEnabled(providerID: ProviderID, productID: String) -> Bool {
@@ -632,9 +642,9 @@ public final class MenuPanelViewModel: ObservableObject {
 
     /// See `NetworkStatusRules`: the clock is injected there so the rules are
     /// assertable without waiting.
-    public var networkStatusIsHealthy: Bool { NetworkStatusRules.isHealthy(networkSnapshot) }
+    public var networkStatusIsHealthy: Bool { NetworkStatusRules.currentHealth(networkSnapshot, interface: resolvedNetworkInterfaceName, now: Date()).healthy }
 
-    public var networkRatesAreStale: Bool { NetworkStatusRules.ratesAreStale(networkSnapshot, now: Date()) }
+    public var networkRatesAreStale: Bool { NetworkStatusRules.ratesAreStale(networkSnapshot, interface: resolvedNetworkInterfaceName, now: Date()) }
 
     public var networkCoverageNotice: String? { NetworkStatusRules.coverageNotice(networkSnapshot) }
 
@@ -642,7 +652,7 @@ public final class MenuPanelViewModel: ObservableObject {
     /// connected-network state rather than from an interface name or sort order.
     public var networkObservationResolution: NetworkObservationResolution {
         NetworkObservationPointResolver.resolve(
-            path: networkSystemPath,
+            path: networkSystemPathUpdatedAt.map { Date().timeIntervalSince($0) > 15 } == true ? .unreadable : networkSystemPath,
             manualSelection: userSelectedNetworkInterface,
             observedInterfaces: Set(networkSnapshot.map { Array($0.interfaces.keys) } ?? [])
         )
@@ -742,6 +752,7 @@ public final class MenuPanelViewModel: ObservableObject {
         #if USAGE_BUTLER_FIXTURES
         if isFixtureMode {
             networkSystemPath = NetworkFixtureCatalog.systemPath
+            networkSystemPathUpdatedAt = Date()
         }
         #endif
         networkRateHistory.record(snapshot)

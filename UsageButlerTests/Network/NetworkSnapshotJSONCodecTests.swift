@@ -223,8 +223,8 @@ final class NetworkSnapshotJSONCodecTests: XCTestCase {
 
     func testWrongVersionIsRejected() throws {
         let encoded = try NetworkSnapshotJSONCodec.encode(makeMinimalSnapshot())
-        let v2 = try mutateJSON(encoded) { $0["version"] = 2 }
-        assertFailure(.unsupportedVersion(2), v2)
+        let future = try mutateJSON(encoded) { $0["version"] = 99 }
+        assertFailure(.unsupportedVersion(99), future)
         let v0 = try mutateJSON(encoded) { $0["version"] = 0 }
         assertFailure(.unsupportedVersion(0), v0)
     }

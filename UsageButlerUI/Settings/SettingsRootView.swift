@@ -167,9 +167,7 @@ public struct SettingsRootView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 280)
                     .onChange(of: larkChatID) { _ in
-                        Task { @MainActor in
-                            await model.loadLarkQuotaAlertChannelStatus()
-                        }
+                        model.invalidateLarkQuotaAlertChannelStatus()
                     }
             }
 

@@ -79,15 +79,12 @@ public struct NetworkChartProjection: Equatable, Sendable {
 /// interval into a "gap" and a stalled source is not smoothed over by an
 /// unrelated UI constant.
 ///
-/// Publication is throttled while the panel is hidden, so buffered samples can
-/// legitimately sit seconds apart. A fixed threshold would shatter the line
-/// after any quiet stretch, which reads as broken instrumentation. The
-/// effective threshold is therefore taken from the samples in view and floored
-/// by the nominal cadence.
+/// Source cadence is carried with each sample. UI publication throttling does
+/// not change this contract or justify bridging missing source observations.
 public struct NetworkChartSamplingContract: Equatable, Sendable {
     /// Nominal source sample spacing while the panel is visible.
     public let nominalSampleInterval: TimeInterval
-    /// Silence longer than this multiple of the observed spacing breaks the line.
+    /// Silence longer than this multiple of declared spacing breaks the line.
     public let gapMultiplier: Double
     /// Never accept a threshold below this, so a jittery cluster of samples
     /// cannot make every ordinary interval look like a hole.
@@ -103,26 +100,18 @@ public struct NetworkChartSamplingContract: Equatable, Sendable {
         self.minimumThreshold = max(0.5, minimumThreshold)
     }
 
-    /// Median monotonic spacing of the samples actually in view.
-    public static func observedInterval(_ samples: [NetworkRateSample]) -> TimeInterval? {
-        var gaps: [UInt64] = []
-        gaps.reserveCapacity(max(0, samples.count - 1))
-        for index in 1..<max(1, samples.count) {
-            let later = samples[index].sampledMonotonic.nanoseconds
-            let earlier = samples[index - 1].sampledMonotonic.nanoseconds
-            if later > earlier { gaps.append(later - earlier) }
-        }
-        guard !gaps.isEmpty else { return nil }
-        gaps.sort()
-        return Double(gaps[gaps.count / 2]) / 1_000_000_000
+    public func effectiveGapThreshold(for samples: [NetworkRateSample]) -> TimeInterval {
+        max(minimumThreshold, nominalSampleInterval * gapMultiplier)
     }
 
-    public func effectiveGapThreshold(for samples: [NetworkRateSample]) -> TimeInterval {
-        guard let observed = Self.observedInterval(samples) else {
-            return max(minimumThreshold, nominalSampleInterval * gapMultiplier)
-        }
-        return max(minimumThreshold, observed * gapMultiplier)
+    public func threshold(between earlier: NetworkRateSample, and later: NetworkRateSample) -> TimeInterval {
+        // Missing cadence is not reconstructed from point spacing. Legacy
+        // samples use the explicitly supplied conservative nominal contract.
+        let cadence = max(earlier.samplingInterval ?? nominalSampleInterval,
+                          later.samplingInterval ?? nominalSampleInterval)
+        return max(minimumThreshold, cadence * gapMultiplier)
     }
+
 }
 
 /// Turns buffered samples into strictly-ordered, independently-grouped chart
@@ -144,7 +133,7 @@ public enum NetworkChartProjector {
         let cutoff = now.addingTimeInterval(-abs(window))
         // A fixed `now` bounds both ends of the window, so a view that reads
         // the clock twice cannot produce a self-overlapping domain.
-        let ordered = wallOrdered(samples.filter { $0.sampledAt > cutoff && $0.sampledAt <= now })
+        let ordered = samples.filter { $0.sampledAt > cutoff && $0.sampledAt <= now }
         let gapThreshold = contract.effectiveGapThreshold(for: ordered)
 
         var points: [NetworkChartPoint] = []
@@ -153,7 +142,7 @@ public enum NetworkChartProjector {
         var downsampled = 0
 
         for direction in NetworkChartDirection.allCases {
-            for run in runs(of: ordered, direction: direction, gapThreshold: gapThreshold) {
+            for run in runs(of: ordered, direction: direction, contract: contract) {
                 segments += 1
                 let kept = thin(run, direction: direction, limit: max(2, maxPointsPerSegment))
                 if kept.count != run.count { downsampled += 1 }
@@ -161,7 +150,7 @@ public enum NetworkChartProjector {
                 if flag { isolated += 1 }
                 guard let first = run.first else { continue }
                 let key = "\(interface)|\(first.captureSessionID.rawValue)|"
-                    + "\(first.counterEpoch.rawValue)|\(direction.rawValue)|\(first.sampledAt.fixedSeconds)"
+                    + "\(first.counterEpoch.rawValue)|\(direction.rawValue)|\(first.sampledAt.fixedSeconds)|\(first.sourceID)|\(first.sampledMonotonic.nanoseconds)"
                 for sample in kept {
                     guard let value = value(of: sample, direction: direction) else { continue }
                     points.append(NetworkChartPoint(
@@ -183,22 +172,6 @@ public enum NetworkChartProjector {
         )
     }
 
-    /// Drops samples that do not advance in wall time. A sleep/resume or an
-    /// NTP correction can hand back an earlier wall stamp; joining it would
-    /// draw the line backwards and is exactly the kind of artifact that reads
-    /// as a real traffic burst.
-    private static func wallOrdered(_ samples: [NetworkRateSample]) -> [NetworkRateSample] {
-        var result: [NetworkRateSample] = []
-        var wall: TimeInterval = -.infinity
-        for sample in samples {
-            let seconds = sample.sampledAt.timeIntervalSince1970
-            guard seconds > wall else { continue }
-            wall = seconds
-            result.append(sample)
-        }
-        return result
-    }
-
     /// Contiguous same-direction stretches. A break happens on an unknown
     /// value, a new capture session, a counter epoch change, or a silent
     /// interval — and only ever for the direction being projected, so an
@@ -206,20 +179,25 @@ public enum NetworkChartProjector {
     private static func runs(
         of samples: [NetworkRateSample],
         direction: NetworkChartDirection,
-        gapThreshold: TimeInterval
+        contract: NetworkChartSamplingContract
     ) -> [[NetworkRateSample]] {
         var result: [[NetworkRateSample]] = []
         var current: [NetworkRateSample] = []
+        var wall = Date.distantPast
         func flush() {
             if !current.isEmpty { result.append(current) }
             current = []
         }
         for sample in samples {
+            // Suppress backward wall stamps, but retain their discontinuity.
+            // Dropping them before segmentation would silently bridge the gap.
+            guard sample.sampledAt > wall else { flush(); continue }
+            wall = sample.sampledAt
             guard let value = value(of: sample, direction: direction) else {
                 flush()
                 continue
             }
-            if let previous = current.last, breaks(before: sample, after: previous, value: value, gapThreshold: gapThreshold) {
+            if let previous = current.last, breaks(before: sample, after: previous, value: value, gapThreshold: contract.threshold(between: previous, and: sample)) {
                 flush()
             }
             current.append(sample)
@@ -241,6 +219,8 @@ public enum NetworkChartProjector {
         value: Double,
         gapThreshold: TimeInterval
     ) -> Bool {
+        if sample.sourceID != previous.sourceID || sample.interfaceName != previous.interfaceName { return true }
+        if sample.sampledMonotonic <= previous.sampledMonotonic { return true }
         if sample.captureSessionID != previous.captureSessionID { return true }
         if sample.counterEpoch != previous.counterEpoch { return true }
         let elapsed = Double(

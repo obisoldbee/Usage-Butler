@@ -96,7 +96,8 @@ extension NetworkSnapshot {
             capabilities: capabilities,
             interfaces: interfaces,
             apps: apps,
-            interfaceRates: interfaceRates
+            interfaceRates: interfaceRates,
+            rateHistory: rateHistory
         )
     }
 }

@@ -124,7 +124,7 @@ public struct NetworkCapabilities: Equatable, Sendable {
 /// accumulate across snapshots.
 public struct NetworkSnapshot: Equatable, Sendable {
     /// Wire/schema contract version of this projection.
-    public static let contractVersion = 1
+    public static let contractVersion = 2
 
     public let sessionID: CaptureSessionID
     /// Monotonic per-session sequence of the source event this projection
@@ -143,6 +143,8 @@ public struct NetworkSnapshot: Equatable, Sendable {
     public let apps: [String: AppNetworkCounters]
     /// Current interface rates keyed by interface name; absent when the
     /// interface has fewer than two samples.
+    /// nil for legacy projections without a source-owned history batch.
+    public let rateHistory: [String: [NetworkRateSample]]?
     public let interfaceRates: [String: NetworkRate]
 
     public init(
@@ -155,7 +157,8 @@ public struct NetworkSnapshot: Equatable, Sendable {
         capabilities: NetworkCapabilities,
         interfaces: [String: InterfaceCounters],
         apps: [String: AppNetworkCounters],
-        interfaceRates: [String: NetworkRate]
+        interfaceRates: [String: NetworkRate],
+        rateHistory: [String: [NetworkRateSample]]? = nil
     ) {
         self.sessionID = sessionID
         self.appliedSequence = appliedSequence
@@ -167,5 +170,6 @@ public struct NetworkSnapshot: Equatable, Sendable {
         self.interfaces = interfaces
         self.apps = apps
         self.interfaceRates = interfaceRates
+        self.rateHistory = rateHistory
     }
 }

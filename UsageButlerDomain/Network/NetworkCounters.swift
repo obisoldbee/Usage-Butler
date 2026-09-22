@@ -34,7 +34,8 @@ public struct DirectionalBytes: Equatable, Sendable {
     /// from one observed direction.
     public var total: UInt64? {
         guard let upload, let download else { return nil }
-        return upload &+ download
+        let result = upload.addingReportingOverflow(download)
+        return result.overflow ? nil : result.partialValue
     }
 }
 
@@ -91,29 +92,44 @@ public enum NetworkInterfaceKind: String, Equatable, Hashable, Sendable {
 /// to 64 bits recovers nothing that already wrapped. Presenting it as a
 /// since-boot or since-monitoring total without this settlement would be an
 /// unproven claim (PRD §13.5).
-public struct SessionByteTotal: Equatable, Sendable {
-    public let bytes: DirectionalBytes
-    /// When the baseline was taken, i.e. the earliest moment this total can
-    /// speak for.
-    public let since: Date
-    public let sinceMonotonic: MonotonicInstant
-    /// False once a reset or a missing sample has broken the chain; the total
-    /// then covers only the surviving segment and must say so. Derived from
-    /// `breakReason` so a total can never claim to be both.
-    public let isContinuous: Bool
+public struct DirectionByteTotal: Equatable, Sendable {
+    public let bytes: UInt64?
+    public let since: Date?
+    public let sinceMonotonic: MonotonicInstant?
     public let breakReason: String?
+    public var isContinuous: Bool { breakReason == nil && since != nil }
 
-    public init(
-        bytes: DirectionalBytes,
-        since: Date,
-        sinceMonotonic: MonotonicInstant,
-        breakReason: String? = nil
-    ) {
+    public init(bytes: UInt64?, since: Date?, sinceMonotonic: MonotonicInstant?, breakReason: String? = nil) {
         self.bytes = bytes
         self.since = since
         self.sinceMonotonic = sinceMonotonic
         self.breakReason = breakReason
-        self.isContinuous = breakReason == nil
+    }
+}
+
+/// Each direction covers its current verifiable segment. No shared start is
+/// asserted when only one counter reset; old v1 starts may be unverified.
+public struct SessionByteTotal: Equatable, Sendable {
+    public let upload: DirectionByteTotal
+    public let download: DirectionByteTotal
+    public var bytes: DirectionalBytes { .init(upload: upload.bytes, download: download.bytes) }
+    public var since: Date? { upload.since == download.since ? upload.since : nil }
+    public var sinceMonotonic: MonotonicInstant? {
+        upload.sinceMonotonic == download.sinceMonotonic ? upload.sinceMonotonic : nil
+    }
+    public var isContinuous: Bool { upload.isContinuous && download.isContinuous }
+    public var breakReason: String? { upload.breakReason ?? download.breakReason }
+
+    public init(upload: DirectionByteTotal, download: DirectionByteTotal) {
+        self.upload = upload
+        self.download = download
+    }
+
+    /// For fixtures with a proven common baseline; v1 migration is handled by
+    /// the codec, never by silently copying a broken shared start.
+    public init(bytes: DirectionalBytes, since: Date, sinceMonotonic: MonotonicInstant, breakReason: String? = nil) {
+        upload = .init(bytes: bytes.upload, since: since, sinceMonotonic: sinceMonotonic, breakReason: breakReason)
+        download = .init(bytes: bytes.download, since: since, sinceMonotonic: sinceMonotonic, breakReason: breakReason)
     }
 }
 
@@ -130,6 +146,8 @@ public struct InterfaceCounters: Equatable, Sendable {
     /// Derived by the aggregator, never by a source: what this capture session
     /// has settled for this interface since its own baseline.
     public let sessionTotal: SessionByteTotal?
+    /// Expected source cadence, declared at sampling, not inferred by the chart.
+    public let samplingInterval: TimeInterval?
 
     public init(
         name: String,
@@ -137,7 +155,8 @@ public struct InterfaceCounters: Equatable, Sendable {
         counters: NetworkByteCounters,
         asOf: Date,
         monotonicAsOf: MonotonicInstant,
-        sessionTotal: SessionByteTotal? = nil
+        sessionTotal: SessionByteTotal? = nil,
+        samplingInterval: TimeInterval? = nil
     ) {
         self.name = name
         self.kind = kind
@@ -145,6 +164,7 @@ public struct InterfaceCounters: Equatable, Sendable {
         self.asOf = asOf
         self.monotonicAsOf = monotonicAsOf
         self.sessionTotal = sessionTotal
+        self.samplingInterval = samplingInterval.flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
     }
 
     /// Same reading with different byte values, for an aggregator that has to
@@ -160,7 +180,8 @@ public struct InterfaceCounters: Equatable, Sendable {
             ),
             asOf: asOf,
             monotonicAsOf: monotonicAsOf,
-            sessionTotal: sessionTotal
+            sessionTotal: sessionTotal,
+            samplingInterval: samplingInterval
         )
     }
 
@@ -171,7 +192,8 @@ public struct InterfaceCounters: Equatable, Sendable {
             counters: counters,
             asOf: asOf,
             monotonicAsOf: monotonicAsOf,
-            sessionTotal: sessionTotal
+            sessionTotal: sessionTotal,
+            samplingInterval: samplingInterval
         )
     }
 }

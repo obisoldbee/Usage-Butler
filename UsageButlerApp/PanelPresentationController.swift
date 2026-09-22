@@ -16,6 +16,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
     #if DEBUG
     private var validationAnchor: NSWindow?
+    private var validationWindow: NSWindow?
     #endif
     private let panelSizing = MenuPanelSizing()
     private var sizeObservation: AnyCancellable?
@@ -66,6 +67,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
         sizeObservation = panelSizing.$height.removeDuplicates().sink { [weak self] height in
             self?.popover.contentSize = NSSize(width: 540, height: height)
             #if DEBUG
+            self?.validationWindow?.setContentSize(NSSize(width: 540, height: height))
             if CommandLine.arguments.contains("--show-panel-for-validation") {
                 NSLog("panel_validation content_width=540 content_height=%.0f", Double(height))
             }
@@ -137,12 +139,27 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
     /// The live panel view, for the Debug acceptance harness that renders what
     /// the user would see. Screen recording of another process is not always
     /// available, and a design mock is not evidence about this window.
-    var validationContentView: NSView? { popover.contentViewController?.view }
-    var validationIsShown: Bool { popover.isShown }
+    var validationContentView: NSView? { validationWindow?.contentView ?? popover.contentViewController?.view }
+    var validationIsShown: Bool { validationWindow?.isVisible ?? popover.isShown }
     #endif
 
     @objc func togglePanel() {
         #if DEBUG
+        if CommandLine.arguments.contains("--network-v2-window"), runtime.launchMode == .offlineFixture {
+            if validationWindow == nil {
+                let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 540, height: panelSizing.height),
+                    styleMask: [.titled, .closable], backing: .buffered, defer: false)
+                window.title = "Usage-Butler Network Validation"
+                window.isReleasedWhenClosed = false
+                window.contentViewController = NSHostingController(rootView: PanelRootView(runtime: runtime, sizing: panelSizing))
+                window.center()
+                validationWindow = window
+            }
+            validationWindow?.makeKeyAndOrderFront(nil)
+            runtime.setPanelVisible(true)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         if CommandLine.arguments.contains("--show-panel-for-validation") {
             NSLog("panel_validation toggle shown=%d button=%d window=%d", popover.isShown ? 1 : 0, statusItem.button != nil ? 1 : 0, statusItem.button?.window != nil ? 1 : 0)
         }
@@ -202,6 +219,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
         else {
             return event
         }
+        if MainActor.assumeIsolated({ runtime.menuModel.selectedPage == .network }) { return event }
         // Inside a text field or menu the key belongs to focus traversal.
         if PanelTabRouting.belongsToFocusedControl(in: event.window) {
             return event
@@ -214,7 +232,10 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
 
     private nonisolated var panelWindowRef: NSWindow? {
         MainActor.assumeIsolated {
-            popover.contentViewController?.view.window
+            #if DEBUG
+            if let validationWindow { return validationWindow }
+            #endif
+            return popover.contentViewController?.view.window
         }
     }
 

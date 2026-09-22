@@ -15,7 +15,8 @@ final class NetworkChartProjectionTests: XCTestCase {
         upload: Double?,
         download: Double?,
         session: CaptureSessionID? = nil,
-        epoch: UInt64 = 0
+        epoch: UInt64 = 0,
+        cadence: TimeInterval = 1
     ) -> NetworkRateSample {
         NetworkRateSample(
             captureSessionID: session ?? self.session,
@@ -23,7 +24,7 @@ final class NetworkChartProjectionTests: XCTestCase {
             sampledAt: baseWall.addingTimeInterval(seconds),
             sampledMonotonic: MonotonicInstant(nanoseconds: UInt64(seconds * 1_000_000_000)),
             uploadBytesPerSecond: upload,
-            downloadBytesPerSecond: download
+            downloadBytesPerSecond: download, samplingInterval: cadence
         )
     }
 
@@ -119,6 +120,7 @@ final class NetworkChartProjectionTests: XCTestCase {
             sample(seconds: 12, upload: 300, download: 300)
         ]
         let projection = project(samples, now: 12)
+        XCTAssertEqual(projection.segmentCount, 4, "discarded rollback must break both paths")
         for points in Dictionary(grouping: projection.points, by: \.seriesKey).values {
             XCTAssertEqual(points, points.sorted { $0.at < $1.at })
         }
@@ -185,7 +187,7 @@ final class NetworkChartProjectionTests: XCTestCase {
     /// reported as a hole in the observation.
     func testSlowCadenceDoesNotShatterTheTrend() {
         let samples = stride(from: 0.0, through: 60.0, by: 5.0).map {
-            sample(seconds: $0, upload: 100, download: 100)
+            sample(seconds: $0, upload: 100, download: 100, cadence: 5)
         }
         let projection = project(samples, now: 60, window: 120)
         XCTAssertEqual(projection.segmentCount, 2, "one line per direction")

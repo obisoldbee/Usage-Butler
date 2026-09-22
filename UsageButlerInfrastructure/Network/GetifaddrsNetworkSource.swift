@@ -89,7 +89,8 @@ public struct GetifaddrsNetworkSource: NetworkObservationSource {
                                     epoch: epoch
                                 ),
                                 asOf: reading.wallTime,
-                                monotonicAsOf: reading.monotonicTime
+                                monotonicAsOf: reading.monotonicTime,
+                                samplingInterval: Double(intervalNanos) / 1e9
                             )),
                             at: reading
                         )

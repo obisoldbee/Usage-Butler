@@ -2,15 +2,15 @@
 set -euo pipefail
 
 if (( $# > 1 )); then
-  echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--panel]" >&2
+  echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--panel|--fixture-panel]" >&2
   exit 2
 fi
 
 MODE="${1:-run}"
 case "$MODE" in
-  run|--debug|debug|--logs|logs|--telemetry|telemetry|--verify|verify|--panel) ;;
+  run|--debug|debug|--logs|logs|--telemetry|telemetry|--verify|verify|--panel|--fixture-panel) ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--panel]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--panel|--fixture-panel]" >&2
     exit 2
     ;;
 esac
@@ -151,6 +151,10 @@ case "$MODE" in
   --telemetry|telemetry)
     open_app
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
+    ;;
+  --fixture-panel)
+    /usr/bin/open -n --env USAGE_BUTLER_OFFLINE_FIXTURE=1 "$APP_BUNDLE" --args --show-panel-for-validation --network-v2-preview --network-v2-window
+    verify_process
     ;;
   --panel)
     /usr/bin/open -n "$APP_BUNDLE" --stdout "$SOURCE_ROOT/.build/panel-validation.stdout.log" --stderr "$SOURCE_ROOT/.build/panel-validation.stderr.log" --args --show-panel-for-validation

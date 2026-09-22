@@ -23,6 +23,13 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
         if CommandLine.arguments.contains("--show-panel-for-validation") {
             DispatchQueue.main.async { controller.togglePanel() }
         }
+        if CommandLine.arguments.contains("--network-v2-preview"), runtime.launchMode == .offlineFixture {
+            runtime.menuModel.selectedPage = .network
+            runtime.menuModel.networkTrendRange = .oneMinute
+            if CommandLine.arguments.contains("--network-v2-dark") {
+                NSApp.appearance = NSAppearance(named: .darkAqua)
+            }
+        }
         NetworkCurveValidation.startIfRequested(runtime: runtime, panel: controller)
         #endif
     }

@@ -37,6 +37,7 @@ public enum NetworkSnapshotJSONCodec {
         var interfaces: [String: InterfaceWire]
         var apps: [String: AppWire]
         var interfaceRates: [String: RateWire]
+        var rateHistory: [String: [SampleWire]]?
     }
 
     private struct Tagged: Codable {
@@ -74,6 +75,7 @@ public enum NetworkSnapshotJSONCodec {
         var asOf: String
         var monotonicAsOf: String
         var sessionTotal: SessionTotalWire?
+        var samplingInterval: Double?
     }
 
     /// Continuity is not stored: it is exactly "no break reason", and writing
@@ -81,9 +83,30 @@ public enum NetworkSnapshotJSONCodec {
     private struct SessionTotalWire: Codable {
         var upload: String?
         var download: String?
-        var since: String
-        var sinceMonotonicAsOf: String
+        var since: String?
+        var sinceMonotonicAsOf: String?
         var breakReason: String?
+        var uploadSegment: DirectionTotalWire?
+        var downloadSegment: DirectionTotalWire?
+    }
+
+    private struct DirectionTotalWire: Codable {
+        var bytes: String?
+        var since: String?
+        var sinceMonotonic: String?
+        var breakReason: String?
+    }
+
+    private struct SampleWire: Codable {
+        var source: String
+        var interface: String
+        var session: String
+        var epoch: String
+        var sampledAt: String
+        var monotonic: String
+        var upload: Double?
+        var download: Double?
+        var samplingInterval: Double?
     }
 
     private struct CountersWire: Codable {
@@ -118,7 +141,7 @@ public enum NetworkSnapshotJSONCodec {
 
     // MARK: - Encode
 
-    public static func encode(_ snapshot: NetworkSnapshot) throws -> Data {
+    public static func encode(_ snapshot: NetworkSnapshot, sizeLimit: Int = defaultSizeLimit) throws -> Data {
         let wire = Wire(
             schema: schema,
             version: version,
@@ -154,7 +177,8 @@ public enum NetworkSnapshotJSONCodec {
                     counters: counters(interface.counters),
                     asOf: format(interface.asOf),
                     monotonicAsOf: String(interface.monotonicAsOf.nanoseconds),
-                    sessionTotal: interface.sessionTotal.map(Self.sessionTotal)
+                    sessionTotal: interface.sessionTotal.map(Self.sessionTotal),
+                    samplingInterval: interface.samplingInterval
                 )
             },
             apps: snapshot.apps.mapValues { app in
@@ -172,11 +196,14 @@ public enum NetworkSnapshotJSONCodec {
                     lastActivity: app.lastActivity.map(format)
                 )
             },
-            interfaceRates: snapshot.interfaceRates.mapValues(rate)
+            interfaceRates: snapshot.interfaceRates.mapValues(rate),
+            rateHistory: snapshot.rateHistory?.mapValues { $0.map(sample) }
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        return try encoder.encode(wire)
+        let data = try encoder.encode(wire)
+        guard data.count <= sizeLimit else { throw NetworkSnapshotCodecFailure.oversized(limit: sizeLimit) }
+        return data
     }
 
     // MARK: - Decode
@@ -192,7 +219,7 @@ public enum NetworkSnapshotJSONCodec {
             throw NetworkSnapshotCodecFailure.corrupt
         }
         guard wire.schema == schema else { throw NetworkSnapshotCodecFailure.unsupportedSchema }
-        guard wire.version == version else { throw NetworkSnapshotCodecFailure.unsupportedVersion(wire.version) }
+        guard wire.version == version || wire.version == 1 else { throw NetworkSnapshotCodecFailure.unsupportedVersion(wire.version) }
 
         let sessionID = CaptureSessionID(rawValue: wire.session)
         guard let appliedSequence = UInt64(wire.appliedSequence) else {
@@ -249,7 +276,8 @@ public enum NetworkSnapshotJSONCodec {
                     counters: try uncounters(interface.counters),
                     asOf: asOf,
                     monotonicAsOf: MonotonicInstant(nanoseconds: monotonic),
-                    sessionTotal: try interface.sessionTotal.map(unsessionTotal)
+                    sessionTotal: try interface.sessionTotal.map { try unsessionTotal($0, version: wire.version) },
+                    samplingInterval: try cadence(interface.samplingInterval)
                 )
             },
             apps: try wire.apps.mapValues { app in
@@ -272,7 +300,8 @@ public enum NetworkSnapshotJSONCodec {
                     }
                 )
             },
-            interfaceRates: try wire.interfaceRates.mapValues(unrate)
+            interfaceRates: try wire.interfaceRates.mapValues(unrate),
+            rateHistory: try wire.rateHistory?.mapValues { try $0.map(unsample) }
         )
     }
 
@@ -288,29 +317,59 @@ public enum NetworkSnapshotJSONCodec {
     }
 
     private static func sessionTotal(_ total: SessionByteTotal) -> SessionTotalWire {
-        SessionTotalWire(
-            upload: total.bytes.upload.map(String.init),
-            download: total.bytes.download.map(String.init),
-            since: format(total.since),
-            sinceMonotonicAsOf: String(total.sinceMonotonic.nanoseconds),
-            breakReason: total.breakReason
-        )
+        SessionTotalWire(uploadSegment: direction(total.upload), downloadSegment: direction(total.download))
     }
 
-    private static func unsessionTotal(_ wire: SessionTotalWire) throws -> SessionByteTotal {
-        guard let since = parse(wire.since),
-              let sinceMonotonic = UInt64(wire.sinceMonotonicAsOf) else {
-            throw NetworkSnapshotCodecFailure.invalidValue(field: "interfaces.sessionTotal.since")
+    private static func direction(_ total: DirectionByteTotal) -> DirectionTotalWire {
+        .init(bytes: total.bytes.map(String.init), since: total.since.map(format),
+              sinceMonotonic: total.sinceMonotonic.map { String($0.nanoseconds) }, breakReason: total.breakReason)
+    }
+
+    private static func undirection(_ wire: DirectionTotalWire) throws -> DirectionByteTotal {
+        let since = try wire.since.map { value in
+            guard let date = parse(value) else { throw NetworkSnapshotCodecFailure.invalidValue(field: "total.since") }
+            return date
         }
-        return SessionByteTotal(
-            bytes: DirectionalBytes(
-                upload: try wire.upload.map { try uint64($0, field: "interfaces.sessionTotal.upload") },
-                download: try wire.download.map { try uint64($0, field: "interfaces.sessionTotal.download") }
-            ),
-            since: since,
-            sinceMonotonic: MonotonicInstant(nanoseconds: sinceMonotonic),
-            breakReason: wire.breakReason
-        )
+        let mono = try wire.sinceMonotonic.map { MonotonicInstant(nanoseconds: try uint64($0, field: "total.monotonic")) }
+        guard (since == nil) == (mono == nil) else { throw NetworkSnapshotCodecFailure.invalidValue(field: "total.baseline") }
+        return .init(bytes: try wire.bytes.map { try uint64($0, field: "total.bytes") },
+                     since: since, sinceMonotonic: mono, breakReason: wire.breakReason)
+    }
+
+    private static func unsessionTotal(_ wire: SessionTotalWire, version: Int) throws -> SessionByteTotal {
+        if version == 2 {
+            guard let upload = wire.uploadSegment, let download = wire.downloadSegment else {
+                throw NetworkSnapshotCodecFailure.invalidValue(field: "total.directionalSegments")
+            }
+            return .init(upload: try undirection(upload), download: try undirection(download))
+        }
+        // v1 could relabel a surviving direction or merge epochs without saying
+        // so. Preserve its bytes only as legacy evidence, never invent starts.
+        return .init(
+            upload: .init(bytes: try wire.upload.map { try uint64($0, field: "total.upload") }, since: nil, sinceMonotonic: nil, breakReason: "legacy-unverified"),
+            download: .init(bytes: try wire.download.map { try uint64($0, field: "total.download") }, since: nil, sinceMonotonic: nil, breakReason: "legacy-unverified"))
+    }
+
+    private static func cadence(_ value: Double?) throws -> Double? {
+        if let value, !value.isFinite || value <= 0 { throw NetworkSnapshotCodecFailure.invalidValue(field: "samplingInterval") }
+        return value
+    }
+
+    private static func sample(_ sample: NetworkRateSample) -> SampleWire {
+        .init(source: sample.sourceID, interface: sample.interfaceName, session: sample.captureSessionID.rawValue,
+              epoch: String(sample.counterEpoch.rawValue), sampledAt: format(sample.sampledAt),
+              monotonic: String(sample.sampledMonotonic.nanoseconds), upload: sample.uploadBytesPerSecond,
+              download: sample.downloadBytesPerSecond, samplingInterval: sample.samplingInterval)
+    }
+
+    private static func unsample(_ wire: SampleWire) throws -> NetworkRateSample {
+        guard let at = parse(wire.sampledAt), [wire.upload, wire.download].allSatisfy({ $0 == nil || ($0!.isFinite && $0! >= 0) }) else {
+            throw NetworkSnapshotCodecFailure.invalidValue(field: "history.sample")
+        }
+        return .init(captureSessionID: .init(rawValue: wire.session), counterEpoch: .init(rawValue: try uint64(wire.epoch, field: "history.epoch")),
+                     sampledAt: at, sampledMonotonic: .init(nanoseconds: try uint64(wire.monotonic, field: "history.monotonic")),
+                     uploadBytesPerSecond: wire.upload, downloadBytesPerSecond: wire.download,
+                     sourceID: wire.source, interfaceName: wire.interface, samplingInterval: try cadence(wire.samplingInterval))
     }
 
     private static func uncounters(_ wire: CountersWire) throws -> NetworkByteCounters {

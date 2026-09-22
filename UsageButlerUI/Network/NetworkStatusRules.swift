@@ -40,6 +40,31 @@ public enum NetworkStatusRules {
         return now.timeIntervalSince(newest) > horizon
     }
 
+    public static func ratesAreStale(_ snapshot: NetworkSnapshot?, interface: String?, now: Date) -> Bool {
+        guard let snapshot, let interface, let source = snapshot.interfaces[interface],
+              let rate = snapshot.interfaceRates[interface] else { return true }
+        switch snapshot.collectionState { case .active, .partial: break; default: return true }
+        let age = now.timeIntervalSince(source.asOf)
+        let rateAge = now.timeIntervalSince(rate.asOf)
+        return age < -1 || age > freshnessHorizon || rateAge < -1 || rateAge > freshnessHorizon
+    }
+
+    public static func currentHealth(_ snapshot: NetworkSnapshot?, interface: String?, now: Date) -> (title: String, healthy: Bool) {
+        guard let snapshot else { return ("尚未获取网络快照", false) }
+        switch snapshot.collectionState {
+        case .stopped: return ("未采集", false)
+        case .starting: return ("正在启动采集", false)
+        case .waitingAuthorization: return ("等待系统授权", false)
+        case .denied: return ("系统权限被拒绝", false)
+        case .disconnected: return ("采集已断开", false)
+        case .active, .partial: break
+        }
+        guard !ratesAreStale(snapshot, interface: interface, now: now), let interface,
+              let rate = snapshot.interfaceRates[interface] else { return ("当前接口暂无新鲜速率", false) }
+        guard rate.uploadBytesPerSecond != nil, rate.downloadBytesPerSecond != nil else { return ("采集中 · 当前方向部分可用", false) }
+        return ("采集中", true)
+    }
+
     /// Why the reading is not fully trustworthy, or nil when there is nothing
     /// to disclose. Built from coverage so the page cannot drift away from what
     /// the collector actually reported.

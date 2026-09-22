@@ -63,13 +63,23 @@ public enum NetworkFixtureCatalog {
         let rates: [String: NetworkRate] = collecting
             ? [
                 "en0": NetworkRate(
-                    uploadBytesPerSecond: 12_400,
-                    downloadBytesPerSecond: 186_000,
+                    uploadBytesPerSecond: 29_000,
+                    downloadBytesPerSecond: 2_900_000,
                     asOf: now,
                     window: .seconds(1)
                 )
             ]
             : [:]
+
+        let history: [NetworkRateSample] = collecting ? (0..<240).map { i in
+            let t = now.addingTimeInterval(Double(i - 239))
+            let gap = (95...108).contains(i)
+            return NetworkRateSample(captureSessionID: .init(rawValue: "fixture-network"), counterEpoch: epoch,
+                sampledAt: t, sampledMonotonic: .init(nanoseconds: monotonic.nanoseconds - UInt64(239 - i) * 1_000_000_000),
+                uploadBytesPerSecond: gap ? nil : Double(10 + i % 20) * 1_000,
+                downloadBytesPerSecond: gap ? nil : Double(10 + i % 20) * 100_000,
+                interfaceName: "en0", samplingInterval: 1)
+        } : []
 
         return NetworkSnapshot(
             sessionID: CaptureSessionID(rawValue: "fixture-network"),
@@ -101,7 +111,8 @@ public enum NetworkFixtureCatalog {
             ),
             interfaces: interfaces,
             apps: [:],
-            interfaceRates: rates
+            interfaceRates: rates,
+            rateHistory: ["en0": history]
         )
     }
 }

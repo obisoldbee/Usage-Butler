@@ -77,32 +77,27 @@ public struct NetworkAggregator: Sendable {
         }
     }
 
-    private struct InterfaceSettlement: Equatable, Sendable {
-        var upload = DirectionState()
-        var download = DirectionState()
-        /// Start of the span these totals can honestly speak for.
-        var since: Date
-        var sinceMonotonic: MonotonicInstant
+    private struct InterfaceDirectionSettlement: Equatable, Sendable {
+        var baseline: UInt64?
+        var total: UInt64?
+        var epoch: CounterEpoch?
+        var since: Date?
+        var sinceMonotonic: MonotonicInstant?
+        var previousAt: MonotonicInstant?
         var breakReason: String?
+        var value: DirectionByteTotal {
+            .init(bytes: total, since: since, sinceMonotonic: sinceMonotonic, breakReason: breakReason)
+        }
+    }
 
-        subscript(_ direction: SettledDirection) -> DirectionState {
+    private struct InterfaceSettlement: Equatable, Sendable {
+        var upload = InterfaceDirectionSettlement()
+        var download = InterfaceDirectionSettlement()
+        subscript(_ direction: SettledDirection) -> InterfaceDirectionSettlement {
             get { direction == .upload ? upload : download }
-            set {
-                switch direction {
-                case .upload: upload = newValue
-                case .download: download = newValue
-                }
-            }
+            set { if direction == .upload { upload = newValue } else { download = newValue } }
         }
-
-        var value: SessionByteTotal {
-            SessionByteTotal(
-                bytes: DirectionalBytes(upload: upload.settled, download: download.settled),
-                since: since,
-                sinceMonotonic: sinceMonotonic,
-                breakReason: breakReason
-            )
-        }
+        var value: SessionByteTotal { .init(upload: upload.value, download: download.value) }
     }
 
     private struct InterfaceState: Equatable, Sendable {
@@ -120,6 +115,7 @@ public struct NetworkAggregator: Sendable {
     private var flows: [FlowID: FlowState] = [:]
     private var flowAppKeys: [FlowID: String] = [:]
     private var processes: [ProcessIdentity: ProcessState] = [:]
+    private var rateHistory = NetworkRateHistoryBuffer()
     private var interfaces: [String: InterfaceState] = [:]
     private var appIdentities: [String: AppIdentity] = [:]
     private var truncatedCollections: Set<String> = []
@@ -216,6 +212,7 @@ public struct NetworkAggregator: Sendable {
             return false
         }
         let existing = interfaces[sample.name]
+        if let existing, sample.monotonicAsOf <= existing.latest.monotonicAsOf { return false }
         var upload = sample.counters.bytes.upload
         var download = sample.counters.bytes.download
         var sanitized = sample
@@ -242,56 +239,59 @@ public struct NetworkAggregator: Sendable {
         }
 
         var settlement = existing?.settlement
-            ?? InterfaceSettlement(since: sample.asOf, sinceMonotonic: sample.monotonicAsOf)
-        settle(&settlement, sample: sample, isFirstSample: existing == nil)
+            ?? InterfaceSettlement()
+        settle(&settlement, sample: sample)
         sanitized = sanitized.replacing(sessionTotal: settlement.value)
         interfaces[sample.name] = InterfaceState(
             latest: sanitized,
             previous: existing?.latest,
             settlement: settlement
         )
+        rateHistory.record(source: sanitized, rate: interfaceRates()[sample.name], session: sessionID)
         return true
     }
 
     /// Accumulates the bytes this session can prove it saw, per direction.
     ///
-    /// An interface counter is a boot total of unverifiable start point and,
-    /// for getifaddrs, 32-bit width — so it is only ever used as the baseline
+    /// An interface counter is a system total of unverifiable start point,
+    /// so it is only ever used as the baseline
     /// for consecutive same-epoch differences. A decrease ends the span: the
     /// bytes around it cannot be attributed, so the segment restarts and
     /// carries the reason instead of resuming as if nothing had happened.
-    private mutating func settle(
-        _ state: inout InterfaceSettlement,
-        sample: InterfaceCounters,
-        isFirstSample: Bool
-    ) {
+    private mutating func settle(_ state: inout InterfaceSettlement, sample: InterfaceCounters) {
         for direction in SettledDirection.allCases {
-            if isFirstSample {
-                // Record the baseline and stop. Whether the source's epoch
-                // happens to equal `DirectionState`'s default must not decide
-                // if a single reading is treated as traffic.
-                var baseline = DirectionState()
-                baseline.epoch = sample.counters.epoch
-                baseline.cumulative = direction.value(of: sample.counters.bytes)
-                state[direction] = baseline
+            var d = state[direction]
+            guard let value = direction.value(of: sample.counters.bytes) else {
+                d.baseline = nil; d.total = nil; d.since = nil; d.sinceMonotonic = nil
+                d.breakReason = "missing-counter"
+                state[direction] = d
                 continue
             }
-            let (next, didReset) = settling(
-                state[direction],
-                value: direction.value(of: sample.counters.bytes),
-                epoch: sample.counters.epoch,
-                semantics: sample.counters.semantics
-            )
-            state[direction] = next
-            if didReset {
-                // An interface total describes a time span, so a new span
-                // legitimately starts at the reset — with the reason attached.
-                state[direction].settled = 0
-                state[direction].settlementBroken = false
-                state.since = sample.asOf
-                state.sinceMonotonic = sample.monotonicAsOf
-                state.breakReason = "counter-reset"
+            var reason: String?
+            if let epoch = d.epoch, epoch != sample.counters.epoch { reason = "epoch-changed" }
+            if let previous = d.previousAt, let cadence = sample.samplingInterval {
+                let elapsed = Double(sample.monotonicAsOf.nanoseconds - previous.nanoseconds) / 1e9
+                if elapsed > cadence * 2.5 { reason = "sampling-gap" }
             }
+            if sample.counters.semantics != .intervalDelta, let baseline = d.baseline, value < baseline {
+                reason = reason ?? "counter-reset"
+            }
+            if d.baseline == nil || reason != nil {
+                d.baseline = value; d.total = nil
+                d.since = sample.asOf; d.sinceMonotonic = sample.monotonicAsOf
+                d.breakReason = reason ?? d.breakReason
+            } else if let baseline = d.baseline {
+                let delta = sample.counters.semantics == .intervalDelta ? value : value - baseline
+                let sum = (d.total ?? 0).addingReportingOverflow(delta)
+                d.total = sum.overflow ? nil : sum.partialValue
+                if sum.overflow {
+                    d.since = sample.asOf; d.sinceMonotonic = sample.monotonicAsOf
+                    d.breakReason = "counter-overflow"
+                }
+                d.baseline = value
+            }
+            d.epoch = sample.counters.epoch; d.previousAt = sample.monotonicAsOf
+            state[direction] = d
         }
     }
 
@@ -485,7 +485,8 @@ public struct NetworkAggregator: Sendable {
             capabilities: capabilities,
             interfaces: interfaces.mapValues(\.latest),
             apps: apps,
-            interfaceRates: interfaceRates()
+            interfaceRates: interfaceRates(),
+            rateHistory: rateHistory.allSeries
         )
     }
 
@@ -583,6 +584,10 @@ public struct NetworkAggregator: Sendable {
         var result: [String: NetworkRate] = [:]
         for (name, state) in interfaces {
             guard let previous = state.previous else { continue }
+            if previous.counters.epoch != state.latest.counters.epoch {
+                result[name] = NetworkRate(uploadBytesPerSecond: nil, downloadBytesPerSecond: nil, asOf: state.latest.asOf, window: .seconds(1))
+                continue
+            }
             result[name] = Self.rate(
                 previousUpload: previous.counters.bytes.upload,
                 previousDownload: previous.counters.bytes.download,

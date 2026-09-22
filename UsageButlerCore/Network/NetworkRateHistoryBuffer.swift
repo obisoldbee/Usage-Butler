@@ -1,48 +1,6 @@
 import Foundation
 import UsageButlerDomain
 
-/// One buffered rate observation for one interface.
-///
-/// It is stamped with the *source counter sample* identity, never with the
-/// publish time of the snapshot that happened to carry it. A snapshot that
-/// re-emits an unchanged rate therefore cannot add a phantom "fresh" point.
-public struct NetworkRateSample: Equatable, Sendable {
-    public let captureSessionID: CaptureSessionID
-    /// Counter epoch of the underlying interface sample. A change means the
-    /// totals are not comparable and the trend must break.
-    public let counterEpoch: CounterEpoch
-    /// Wall time of the source counter sample (display axis only).
-    public let sampledAt: Date
-    /// Monotonic time of the source counter sample (ordering and dedup).
-    public let sampledMonotonic: MonotonicInstant
-    /// `nil` when that direction's rate was unknown; unknown is not zero.
-    public let uploadBytesPerSecond: Double?
-    public let downloadBytesPerSecond: Double?
-
-    public init(
-        captureSessionID: CaptureSessionID,
-        counterEpoch: CounterEpoch,
-        sampledAt: Date,
-        sampledMonotonic: MonotonicInstant,
-        uploadBytesPerSecond: Double?,
-        downloadBytesPerSecond: Double?
-    ) {
-        self.captureSessionID = captureSessionID
-        self.counterEpoch = counterEpoch
-        self.sampledAt = sampledAt
-        self.sampledMonotonic = sampledMonotonic
-        self.uploadBytesPerSecond = uploadBytesPerSecond
-        self.downloadBytesPerSecond = downloadBytesPerSecond
-    }
-
-    /// A sample with neither direction known still carries information: it is a
-    /// hole in the observation, and dropping it would let the chart bridge the
-    /// gap with a fabricated straight line.
-    public var isGap: Bool {
-        uploadBytesPerSecond == nil && downloadBytesPerSecond == nil
-    }
-}
-
 /// Bounded in-memory per-interface rate history for the trend chart. It is a
 /// display buffer, not the history store: it never fabricates points, keys
 /// every point on the source sample it came from, and drops the oldest
@@ -70,33 +28,44 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
     /// A rate is skipped when its source sample is already buffered (the same
     /// snapshot republished) or when the source monotonic stamp does not
     /// advance. Wall-clock is never used for that ordering decision.
+    public var allSeries: [String: [NetworkRateSample]] { samples }
+
+    /// A source-owned complete batch replaces the display buffer. Legacy and
+    /// fixture snapshots without a batch use the same source-identity gate.
     public mutating func record(_ snapshot: NetworkSnapshot) {
-        for (name, rate) in snapshot.interfaceRates {
-            // Without the originating interface sample there is no honest time
-            // or epoch to attach, so the rate cannot become a trend point.
-            guard let source = snapshot.interfaces[name] else { continue }
-            var series = samples[name] ?? []
-            if let last = series.last {
-                if last.captureSessionID == snapshot.sessionID,
-                   last.sampledMonotonic == source.monotonicAsOf {
-                    republishedSampleCount += 1
-                    continue
-                }
-                guard source.monotonicAsOf > last.sampledMonotonic else { continue }
-            }
-            series.append(NetworkRateSample(
-                captureSessionID: snapshot.sessionID,
-                counterEpoch: source.counters.epoch,
-                sampledAt: source.asOf,
-                sampledMonotonic: source.monotonicAsOf,
-                uploadBytesPerSecond: rate.uploadBytesPerSecond,
-                downloadBytesPerSecond: rate.downloadBytesPerSecond
-            ))
-            if series.count > capacity {
-                series.removeFirst(series.count - capacity)
-            }
-            samples[name] = series
+        if let history = snapshot.rateHistory {
+            samples = history.mapValues { Array($0.suffix(capacity)) }
+            return
         }
+        for (name, rate) in snapshot.interfaceRates {
+            guard let source = snapshot.interfaces[name] else { continue }
+            record(source: source, rate: rate, session: snapshot.sessionID)
+        }
+    }
+
+    public mutating func record(source: InterfaceCounters, rate: NetworkRate?, session: CaptureSessionID) {
+        var series = samples[source.name] ?? []
+        if let last = series.last, last.captureSessionID == session {
+            if last.sampledMonotonic == source.monotonicAsOf {
+                republishedSampleCount += 1
+                return
+            }
+            guard source.monotonicAsOf > last.sampledMonotonic else { return }
+        }
+        series.append(NetworkRateSample(
+            captureSessionID: session, counterEpoch: source.counters.epoch,
+            sampledAt: source.asOf, sampledMonotonic: source.monotonicAsOf,
+            uploadBytesPerSecond: rate?.uploadBytesPerSecond,
+            downloadBytesPerSecond: rate?.downloadBytesPerSecond,
+            interfaceName: source.name, samplingInterval: source.samplingInterval
+        ))
+        // Time and point limits both apply, including when the source is faster
+        // or slower than 1 Hz. Monotonic retention ignores wall-clock changes.
+        let cutoff = source.monotonicAsOf.nanoseconds > 7_200_000_000_000
+            ? source.monotonicAsOf.nanoseconds - 7_200_000_000_000 : 0
+        series.removeAll { $0.captureSessionID == session && $0.sampledMonotonic.nanoseconds < cutoff }
+        if series.count > capacity { series.removeFirst(series.count - capacity) }
+        samples[source.name] = series
     }
 
     public func series(for interface: String) -> [NetworkRateSample] {

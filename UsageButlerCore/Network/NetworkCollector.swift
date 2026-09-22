@@ -87,6 +87,7 @@ public actor NetworkCollector {
 
     /// Stops both loops and finishes the update stream.
     public func stop() {
+        started = false
         tearDownSession()
         publishTask?.cancel()
         publishTask = nil
@@ -200,6 +201,7 @@ public actor NetworkCollector {
     }
 
     private func handle(_ event: NetworkSourceEvent) {
+        guard event.envelope.sessionID == aggregator?.sessionID else { return }
         if case let .heartbeat(observed) = event.payload {
             capabilities = observed
         }
