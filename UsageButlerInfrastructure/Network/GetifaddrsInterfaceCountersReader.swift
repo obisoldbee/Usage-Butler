@@ -2,14 +2,17 @@ import Darwin
 import Foundation
 import UsageButlerDomain
 
-/// Reads the public Darwin routing sysctl's 64-bit interface counters.
+/// Reads the public Darwin interface MIB's 64-bit counters.
+/// NET_RT_IFLIST2 uses a UInt64 struct but XNU's non-platform byte rounding
+/// casts to UInt32. IFDATA_GENERAL preserves the full counter; verify the
+/// actual reader against system readings, not only synthetic parser inputs.
 /// The type name is retained for source compatibility; no 32-bit fallback is
 /// mixed into the same capture epoch. Failed reads are empty, never zero.
 public struct GetifaddrsInterfaceCountersReader: InterfaceCountersReading {
     public init() {}
 
     public func read() -> [RawInterfaceCounters] {
-        var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, 0, NET_RT_IFLIST2, 0]
+        var mib: [Int32] = [CTL_NET, PF_LINK, NETLINK_GENERIC, IFMIB_IFALLDATA, 0, IFDATA_GENERAL]
         var count = 0
         guard sysctl(&mib, u_int(mib.count), nil, &count, nil, 0) == 0,
               count > 0, count <= 4 * 1024 * 1024 else { return [] }
@@ -26,25 +29,21 @@ public struct GetifaddrsInterfaceCountersReader: InterfaceCountersReading {
 
     static func decode(_ data: Data) -> [RawInterfaceCounters] {
         data.withUnsafeBytes { bytes in
-            var offset = 0
+            let stride = MemoryLayout<ifmibdata>.stride
+            guard bytes.count.isMultiple(of: stride) else { return [] }
             var result: [RawInterfaceCounters] = []
-            while offset < bytes.count {
-                guard bytes.count - offset >= 4 else { return [] }
-                let length = Int(bytes.loadUnaligned(fromByteOffset: offset, as: UInt16.self))
-                guard length >= 4, length <= bytes.count - offset else { return [] }
-                let type = bytes[offset + 3]
-                if type == RTM_IFINFO2 {
-                    guard length >= MemoryLayout<if_msghdr2>.size else { return [] }
-                    let header = bytes.loadUnaligned(fromByteOffset: offset, as: if_msghdr2.self)
-                    var nameBuffer = [CChar](repeating: 0, count: Int(IFNAMSIZ))
-                    if if_indextoname(UInt32(header.ifm_index), &nameBuffer) != nil {
-                        let name = String(cString: nameBuffer)
-                        result.append(.init(name: name, kind: classify(name: name),
-                                            uploadBytes: header.ifm_data.ifi_obytes,
-                                            downloadBytes: header.ifm_data.ifi_ibytes))
-                    }
+            for offset in Swift.stride(from: 0, to: bytes.count, by: stride) {
+                var record = bytes.loadUnaligned(fromByteOffset: offset, as: ifmibdata.self)
+                let name = withUnsafeBytes(of: &record.ifmd_name) { nameBytes -> String? in
+                    guard let end = nameBytes.firstIndex(of: 0), end > 0 else { return nil }
+                    return String(bytes: nameBytes[..<end], encoding: .utf8)
                 }
-                offset += length
+                // Detached interfaces may have an all-zero record. A missing
+                // name is not a measured zero-byte interface.
+                guard let name else { continue }
+                result.append(.init(name: name, kind: classify(name: name),
+                                    uploadBytes: record.ifmd_data.ifi_obytes,
+                                    downloadBytes: record.ifmd_data.ifi_ibytes))
             }
             return result.sorted { $0.name < $1.name }
         }

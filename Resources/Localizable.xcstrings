@@ -23,6 +23,17 @@
         }
       }
     },
+    "%@ · %@ · %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@ · %@"
+          }
+        }
+      }
+    },
     "%@ · 自动检测": {
       "extractionState": "manual",
       "localizations": {
@@ -562,6 +573,17 @@
         }
       }
     },
+    "历史最多保留本进程最近 2 小时；退出后不恢复。启动前和未采集时段留空，属于正常情况。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "历史最多保留本进程最近 2 小时；退出后不恢复。启动前和未采集时段留空，属于正常情况。"
+          }
+        }
+      }
+    },
     "取消": {
       "extractionState": "manual",
       "localizations": {
@@ -980,6 +1002,39 @@
         }
       }
     },
+    "所选范围内上传、下载统计曾重新起算 · 详见统计说明": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选范围内上传、下载统计曾重新起算 · 详见统计说明"
+          }
+        }
+      }
+    },
+    "所选范围内上传统计曾重新起算 · 详见统计说明": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选范围内上传统计曾重新起算 · 详见统计说明"
+          }
+        }
+      }
+    },
+    "所选范围内下载统计曾重新起算 · 详见统计说明": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所选范围内下载统计曾重新起算 · 详见统计说明"
+          }
+        }
+      }
+    },
     "所选项目不是可执行的 %@ 文件": {
       "extractionState": "manual",
       "localizations": {
@@ -1064,6 +1119,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "无法访问 CLI"
+          }
+        }
+      }
+    },
+    "旧记录的累计起点未验证": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "旧记录的累计起点未验证"
           }
         }
       }
@@ -1596,6 +1662,28 @@
         }
       }
     },
+    "累计超出可表示范围后重新起算": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "累计超出可表示范围后重新起算"
+          }
+        }
+      }
+    },
+    "缺失计数恢复后重新起算": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缺失计数恢复后重新起算"
+          }
+        }
+      }
+    },
     "缺少额度字段": {
       "extractionState": "manual",
       "localizations": {
@@ -1691,6 +1779,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "警告"
+          }
+        }
+      }
+    },
+    "计数周期变化后重新起算": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "计数周期变化后重新起算"
           }
         }
       }
@@ -1933,6 +2032,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "部分额度条目异常"
+          }
+        }
+      }
+    },
+    "采样中断后重新起算": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "采样中断后重新起算"
           }
         }
       }

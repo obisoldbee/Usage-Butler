@@ -169,7 +169,7 @@ final class GetifaddrsInterfaceCountersReaderTests: XCTestCase {
     }
 
     func testLiveReadReturnsSortedNonEmptyInterfaces() {
-        // Smoke against the real getifaddrs: every booted Mac has loopback.
+        // Smoke against the real interface MIB: every booted Mac has loopback.
         let interfaces = GetifaddrsInterfaceCountersReader().read()
         XCTAssertFalse(interfaces.isEmpty)
         XCTAssertEqual(interfaces.map(\.name), interfaces.map(\.name).sorted())

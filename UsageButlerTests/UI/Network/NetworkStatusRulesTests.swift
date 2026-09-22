@@ -2,6 +2,7 @@ import AppKit
 import XCTest
 @testable import UsageButlerUI
 import UsageButlerDomain
+import UsageButlerCore
 
 /// Guards the "green means the data is good" rules and the Tab focus
 /// exception, both of which were previously only reachable through the app
@@ -137,6 +138,44 @@ final class NetworkStatusRulesTests: XCTestCase {
 /// PRD 0.20 §13.3: Tab inside a field belongs to focus, not to page cycling.
 @MainActor
 final class PanelTabRoutingTests: XCTestCase {
+    private func event(in window: NSWindow, modifiers: NSEvent.ModifierFlags = [], keyCode: UInt16 = 48) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                        timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                        characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: keyCode)!
+    }
+
+    func testBareTabCyclesAllThreePagesTwiceIncludingNetworkToQuota() {
+        let window = makeWindow()
+        window.makeFirstResponder(window)
+        let model = MenuPanelViewModel(snapshot: .init(providers: [], memory: .init(
+            pressure: .unknown, fields: [], history: [], capturedAt: .distantPast, origin: .runtime
+        )), settingsProviders: [])
+        for _ in 0..<2 {
+            for page in MenuPage.allCases {
+                XCTAssertEqual(model.selectedPage, page)
+                XCTAssertTrue(PanelTabRouting.shouldCyclePage(for: event(in: window), panelWindow: window))
+                model.cyclePage()
+            }
+        }
+        XCTAssertEqual(model.selectedPage, MenuPage.allCases.first)
+    }
+
+    func testTabPolicyLeavesFieldsModifiersOtherWindowsAndKeysAlone() {
+        let window = makeWindow(), other = makeWindow()
+        window.makeFirstResponder(window)
+        XCTAssertFalse(PanelTabRouting.shouldCyclePage(for: event(in: other), panelWindow: window))
+        XCTAssertFalse(PanelTabRouting.shouldCyclePage(for: event(in: window), panelWindow: nil))
+        XCTAssertFalse(PanelTabRouting.shouldCyclePage(for: event(in: window, keyCode: 49), panelWindow: window))
+        for modifier in [NSEvent.ModifierFlags.shift, .control, .option, .command] {
+            XCTAssertFalse(PanelTabRouting.shouldCyclePage(for: event(in: window, modifiers: modifier), panelWindow: window))
+        }
+        XCTAssertTrue(PanelTabRouting.shouldCyclePage(for: event(in: window, modifiers: .capsLock), panelWindow: window))
+        let field = NSTextField()
+        window.contentView?.addSubview(field)
+        window.makeFirstResponder(field)
+        XCTAssertFalse(PanelTabRouting.shouldCyclePage(for: event(in: window), panelWindow: window))
+    }
+
     private func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 540, height: 420),

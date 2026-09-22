@@ -57,7 +57,7 @@ struct NetworkOverviewView: View {
             let projection = model.networkTrendProjection(now: now, window: model.networkTrendRange.duration)
             let stale = NetworkStatusRules.ratesAreStale(model.networkSnapshot, interface: name, now: now)
             VStack(alignment: .leading, spacing: 12) {
-                status(now: now, name: name)
+                status(now: now, name: name, samples: samples)
                 observationSelector
                 trend(now: now, source: source, rate: rate, samples: samples, projection: projection, stale: stale)
                 #if USAGE_BUTLER_FIXTURES
@@ -71,10 +71,14 @@ struct NetworkOverviewView: View {
                         if let source {
                             Text("原始接口计数（起点未验证） 上传 \(NetworkPresentation.bytes(source.counters.bytes.upload)) · 下载 \(NetworkPresentation.bytes(source.counters.bytes.download))")
                             Text("源采样时间 \(source.asOf.formatted(date: .omitted, time: .standard))")
+                            if let total = source.sessionTotal {
+                                segmentDiagnostic("上传", total.upload)
+                                segmentDiagnostic("下载", total.download)
+                            }
                         }
                         if let notice = model.networkCoverageNotice { Text("全接口诊断：\(notice)") }
                         Text("本段累计只包括各方向当前可验证段；重置、缺失或 epoch 变化会重新建立对应基线。")
-                        Text("历史最多保留本进程最近 2 小时；退出后不恢复。")
+                        Text("历史最多保留本进程最近 2 小时；退出后不恢复。启动前和未采集时段留空，属于正常情况。")
                     }.font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }.accessibilityIdentifier("network.diagnostics")
             }
@@ -88,7 +92,15 @@ struct NetworkOverviewView: View {
         inspectedAt = nil; pinned = false
     }
 
-    private func status(now: Date, name: String?) -> some View {
+    @ViewBuilder
+    private func segmentDiagnostic(_ title: String, _ segment: DirectionByteTotal) -> some View {
+        if let reason = segment.breakReason {
+            let time = segment.since.map { $0.formatted(date: .omitted, time: .standard) } ?? "时点未知"
+            Text("\(title) · \(time) · \(NetworkStatusRules.sessionTotalReasonText(reason))")
+        }
+    }
+
+    private func status(now: Date, name: String?, samples: [NetworkRateSample]) -> some View {
         let health = NetworkStatusRules.currentHealth(model.networkSnapshot, interface: name, now: now)
         return HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 4) {
@@ -96,8 +108,12 @@ struct NetworkOverviewView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(health.healthy ? Color.green : Color.secondary)
                 Text("仅监控 / 防护未开启").font(.caption).foregroundStyle(.secondary)
-                if let total = name.flatMap({ model.networkSnapshot?.interfaces[$0]?.sessionTotal }), !total.isContinuous {
-                    Text("当前接口历史不完整 · 详见统计说明").font(.caption2).foregroundStyle(.orange)
+                if let notice = NetworkStatusRules.historyRestartNotice(
+                    name.flatMap { model.networkSnapshot?.interfaces[$0]?.sessionTotal },
+                    samples: samples, now: now, window: model.networkTrendRange.duration
+                ) {
+                    Text(notice).font(.caption2).foregroundStyle(.orange)
+                        .accessibilityIdentifier("network.historyRestart")
                 }
             }
             Spacer()

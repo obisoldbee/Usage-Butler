@@ -9,6 +9,15 @@ import AppKit
 /// not treated as a control: it holds focus for the whole panel, so counting it
 /// would disable page cycling entirely.
 public enum PanelTabRouting {
+    /// The same policy applies to every page, including the last page in the
+    /// cycle. Only the actual first responder can claim a bare Tab.
+    public static func shouldCyclePage(for event: NSEvent, panelWindow: NSWindow?) -> Bool {
+        guard let panelWindow, event.window === panelWindow, event.keyCode == 48,
+              event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                .subtracting(.capsLock).isEmpty else { return false }
+        return !belongsToFocusedControl(in: panelWindow)
+    }
+
     public static func belongsToFocusedControl(in window: NSWindow?) -> Bool {
         guard let window else { return false }
         let responder = window.firstResponder

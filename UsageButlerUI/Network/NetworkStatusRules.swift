@@ -101,8 +101,37 @@ public enum NetworkStatusRules {
     public static func sessionTotalReasonText(_ reason: String?) -> String {
         switch reason {
         case "counter-reset": String(localized: "计数器重置后重新起算，之前的字节无法归因")
+        case "sampling-gap": String(localized: "采样中断后重新起算")
+        case "missing-counter": String(localized: "缺失计数恢复后重新起算")
+        case "epoch-changed": String(localized: "计数周期变化后重新起算")
+        case "counter-overflow": String(localized: "累计超出可表示范围后重新起算")
+        case "legacy-unverified": String(localized: "旧记录的累计起点未验证")
         case nil: String(localized: "连续")
         case let reason?: String(localized: "因 \(reason) 重新起算")
+        }
+    }
+
+    /// The segment keeps its historical reason for diagnostics, but an old
+    /// restart is not an error in a newer viewing window. Startup's empty
+    /// leading edge is expected; require an earlier observed rate in-range.
+    public static func historyRestartNotice(
+        _ total: SessionByteTotal?, samples: [NetworkRateSample], now: Date, window: TimeInterval
+    ) -> String? {
+        guard let total, window.isFinite, window > 0 else { return nil }
+        let cutoff = now.addingTimeInterval(-window)
+        func restarted(_ segment: DirectionByteTotal, rate: KeyPath<NetworkRateSample, Double?>) -> Bool {
+            guard let reason = segment.breakReason, reason != "legacy-unverified",
+                  let since = segment.since, since > cutoff, since <= now else { return false }
+            return samples.contains { sample in
+                sample.sampledAt > cutoff && sample.sampledAt < since && sample[keyPath: rate] != nil
+            }
+        }
+        switch (restarted(total.upload, rate: \.uploadBytesPerSecond),
+                restarted(total.download, rate: \.downloadBytesPerSecond)) {
+        case (true, true): return String(localized: "所选范围内上传、下载统计曾重新起算 · 详见统计说明")
+        case (true, false): return String(localized: "所选范围内上传统计曾重新起算 · 详见统计说明")
+        case (false, true): return String(localized: "所选范围内下载统计曾重新起算 · 详见统计说明")
+        case (false, false): return nil
         }
     }
 

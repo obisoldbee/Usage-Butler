@@ -22,13 +22,15 @@ usagebutler.network.snapshot version=2；保留v1读取。v2总量采用uploadSe
 
 ## 接口来源
 
-64位实现使用Darwin sysctl CTL_NET/PF_ROUTE/NET_RT_IFLIST2的if_msghdr2.ifm_data，读取有界缓冲并检查消息长度；失败返回无读数，不混入32位fallback。源class原名GetifaddrsInterfaceCountersReader为兼容保留，运行实现不再用32位if_data字节值。官方结构证据见 [Apple XNU if.h](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/if.h)，并已核对本机SDK。当前真机数值与受控回环流量须另有执行收据。
+0.3.1 使用公开 Darwin sysctl CTL_NET/PF_LINK/NETLINK_GENERIC/IFMIB_IFALLDATA/0/IFDATA_GENERAL 的 ifmibdata.ifmd_data。读取有界缓冲，检查完整记录长度、空接口和名称边界；失败返回无读数，不混入零值或 32 位 fallback。源 class 原名 GetifaddrsInterfaceCountersReader 为兼容保留。
 
-SystemConfiguration路径独立时效，15秒未更新降为未确认；UI不得猜Wi-Fi或代理软件归属。所选接口速率超过12秒或源时间在未来，显示未知。全局历史reset只在诊断显示，当前健康依据所选接口的新鲜两向速率。
+0.3.0 的 NET_RT_IFLIST2 假设已被真机反例否定：虽然结构字段为 UInt64，Apple XNU 的非平台进程分支会将字节计数转换为 UInt32，产生 4 GiB 回绕。结构声明和合成 parser 测试不能证明真实来源位宽。证据：[Apple rtsock.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/rtsock.c)、[Apple if_mib.c](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/net/if_mib.c)。新读取器使用普通用户权限，无平台签名、提权或私有 entitlement；真机回归把实际读数夹在两次系统 netstat 读数之间。
+
+SystemConfiguration路径独立时效，15秒未更新降为未确认；UI不得猜Wi-Fi或代理软件归属。所选接口速率超过12秒或源时间在未来，显示未知。全局历史 reset 只在诊断显示，当前健康依据所选接口的新鲜两向速率。顶部重新起算提示须同时满足：对应方向有 breakReason、起点位于当前选择范围内、范围内该起点之前有已知速率。初始基线、启动前空白、范围外旧中断和未验证旧起点均不告警；原因与时点在统计说明保留。
 
 ## 图表与交互
 
-红上蓝下，独立0基线轴，12%留白，nice上限1/2/3/5/8/10；扩张立即、缩小45%/8秒滞回，单调时间。两图共享now/range/inspection，五档独占行。键盘查看原始点，鼠标查看不插值；未知/缺口保留。NSView仅处理图表焦点下的方向/Home/End/Space/Escape，表单Tab优先。
+红上蓝下，独立0基线轴，12%留白，nice上限1/2/3/5/8/10；扩张立即、缩小45%/8秒滞回，单调时间。两图共享now/range/inspection，五档独占行。键盘查看原始点，鼠标查看不插值；未知/缺口保留。NSView仅处理图表焦点下的方向/Home/End/Space/Escape，表单 Tab 优先。裸 Tab 在三个页面统一循环（额度→内存→网络→额度），不能整页跳过网络。
 
 Debug演示UI与生产采集分离，Release条件编译排除演示应用/目标。演示规则仅草稿。导出用字段白名单、默认别名、预览后NSSavePanel/SwiftUI exporter本地保存；取消不写，失败展示。不输出路径/PID/凭据或网络内容。
 

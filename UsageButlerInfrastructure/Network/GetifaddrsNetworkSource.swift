@@ -3,11 +3,11 @@ import Foundation
 import UsageButlerCore
 import UsageButlerDomain
 
-/// Live observation source built on getifaddrs interface counters only.
+/// Live observation source built on public interface MIB counters only.
 /// Honest capability profile: interface byte observation works without
 /// special entitlements, but per-app attribution and every enforcement
 /// action need the signed system extension this build does not ship (G-N0),
-/// and history/export are not implemented yet — so those capabilities report
+/// and persistent history/export are not implemented yet — so those capabilities report
 /// their real blockers instead of pretending.
 public struct GetifaddrsNetworkSource: NetworkObservationSource {
     public static let defaultPollInterval: Duration = .seconds(1)

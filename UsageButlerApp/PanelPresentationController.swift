@@ -79,7 +79,10 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
 
         let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [weak self] event in
-            self?.handlePanelKeyDown(event) ?? event
+            guard let self else { return event }
+            // nil means consumed; do not send the same Tab on to AppKit after
+            // cycling the page (which would also move its control focus).
+            return self.handlePanelKeyDown(event)
         }
         keyDownMonitor = monitor
 
@@ -210,20 +213,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
 
     /// Tab (no modifiers) cycles the panel pages while the panel window is key.
     private nonisolated func handlePanelKeyDown(_ event: NSEvent) -> NSEvent? {
-        guard event.keyCode == 48,
-              event.modifierFlags
-                  .intersection(.deviceIndependentFlagsMask)
-                  .subtracting(.capsLock)
-                  .isEmpty,
-              event.window === panelWindowRef
-        else {
-            return event
-        }
-        if MainActor.assumeIsolated({ runtime.menuModel.selectedPage == .network }) { return event }
-        // Inside a text field or menu the key belongs to focus traversal.
-        if PanelTabRouting.belongsToFocusedControl(in: event.window) {
-            return event
-        }
+        guard PanelTabRouting.shouldCyclePage(for: event, panelWindow: panelWindowRef) else { return event }
         Task { @MainActor in
             runtime.menuModel.cyclePage()
         }

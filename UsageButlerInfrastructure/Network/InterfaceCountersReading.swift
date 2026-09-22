@@ -24,8 +24,8 @@ public struct RawInterfaceCounters: Equatable, Sendable {
 }
 
 /// Synchronous point-in-time read of per-interface cumulative counters.
-/// Implementations must be cheap enough for a 1 Hz poll; getifaddrs is a
-/// pure userspace read of kernel-shared memory, so it qualifies.
+/// Implementations must be cheap enough for a 1 Hz poll. The live reader
+/// performs a bounded local sysctl read, without launching subprocesses.
 public protocol InterfaceCountersReading: Sendable {
     func read() -> [RawInterfaceCounters]
 }
