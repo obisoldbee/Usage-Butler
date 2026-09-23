@@ -19,6 +19,17 @@ struct NetworkSettingsView: View {
                     .labelsHidden()
                     .accessibilityIdentifier("settings.network.collectionEnabled")
                 }
+                Divider()
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let health = NetworkStatusRules.currentHealth(
+                        model.networkSnapshot, interface: model.resolvedNetworkInterfaceName, now: context.date
+                    )
+                    SettingsRow(title: String(localized: "采集状态"), subtitle: nil) {
+                        Label(health.title, systemImage: health.healthy ? "circle.fill" : "circle.dashed")
+                            .foregroundStyle(health.healthy ? Color.green : Color.secondary)
+                            .accessibilityIdentifier("settings.network.collectionStatus")
+                    }
+                }
             }
 
             SettingsSection(title: String(localized: "统计哪个网络")) {
@@ -50,6 +61,17 @@ struct NetworkSettingsView: View {
                 .font(.callout)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
+            }
+
+            SettingsSection(title: String(localized: "功能范围")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("当前版本统计所选网络接口的上传、下载流量。")
+                    Text("按应用流量、连接目标和连接阻断尚未提供，不能通过设置开启。")
+                }
+                .font(.callout).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .accessibilityIdentifier("settings.network.capabilities")
             }
 
             SettingsSection(title: String(localized: "统计说明")) {
@@ -91,35 +113,6 @@ struct NetworkSettingsView: View {
         if let reason = segment.breakReason {
             let time = segment.since.map { $0.formatted(date: .omitted, time: .standard) } ?? String(localized: "时点未知")
             Text("\(title) · \(time) · \(NetworkStatusRules.sessionTotalReasonText(reason))")
-        }
-    }
-}
-
-struct NetworkSettingsButton: View {
-    @ObservedObject var model: MenuPanelViewModel
-    let onOpenSettingsFallback: () -> Void
-
-    var body: some View {
-        if #available(macOS 14, *) {
-            NetworkSettingsActionButton(model: model)
-        } else {
-            Button("网络设置…") {
-                model.settingsPage = .network
-                onOpenSettingsFallback()
-            }
-        }
-    }
-}
-
-@available(macOS 14, *)
-private struct NetworkSettingsActionButton: View {
-    @ObservedObject var model: MenuPanelViewModel
-    @Environment(\.openSettings) private var openSettings
-
-    var body: some View {
-        Button("网络设置…") {
-            model.settingsPage = .network
-            openSettings()
         }
     }
 }

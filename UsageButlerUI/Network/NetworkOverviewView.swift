@@ -37,7 +37,6 @@ enum NetworkPresentation {
 
 struct NetworkOverviewView: View {
     @ObservedObject var model: MenuPanelViewModel
-    let onOpenSettingsFallback: () -> Void
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = context.date
@@ -47,13 +46,10 @@ struct NetworkOverviewView: View {
             let frame = model.networkTrendFrame(now: now, window: model.networkTrendRange.duration)
             let stale = NetworkStatusRules.ratesAreStale(model.networkSnapshot, interface: name, now: now)
             VStack(alignment: .leading, spacing: 12) {
-                status(now: now, name: name, samples: frame.samples)
-                observationSummary
+                notices(now: now, name: name, samples: frame.samples)
                 NetworkTrendView(range: $model.networkTrendRange, frame: frame, source: source, rate: rate, stale: stale, interface: model.userSelectedNetworkInterface ?? name)
                 #if USAGE_BUTLER_FIXTURES
-                if model.isFixtureMode { NetworkDemoApplicationsView() } else { unavailableApps }
-                #else
-                unavailableApps
+                if model.isFixtureMode { NetworkDemoApplicationsView() }
                 #endif
             }
             .onChange(of: now) { _ in model.tickNetworkPathFreshness() }
@@ -64,53 +60,30 @@ struct NetworkOverviewView: View {
         }
     }
 
-    private func status(now: Date, name: String?, samples: [NetworkRateSample]) -> some View {
+    @ViewBuilder
+    private func notices(now: Date, name: String?, samples: [NetworkRateSample]) -> some View {
         let health = NetworkStatusRules.currentHealth(model.networkSnapshot, interface: name, now: now)
-        return HStack(alignment: .center) {
+        if !health.healthy {
             VStack(alignment: .leading, spacing: 4) {
-                Label(health.title, systemImage: health.healthy ? "circle.fill" : "circle.dashed")
+                Label(health.title, systemImage: "circle.dashed")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(health.healthy ? Color.green : Color.secondary)
-                Text("仅监控 / 防护未开启").font(.caption).foregroundStyle(.secondary)
-                if let notice = NetworkStatusRules.historyRestartNotice(
-                    name.flatMap { model.networkSnapshot?.interfaces[$0]?.sessionTotal },
-                    samples: samples, now: now, window: model.networkTrendRange.duration
-                ) {
-                    Text(notice).font(.caption2).foregroundStyle(.orange)
-                        .accessibilityIdentifier("network.historyRestart")
+                if model.networkSnapshot?.collectionState == .stopped {
+                    Text("可在设置 → 网络中开启采集。")
+                        .font(.caption)
                 }
             }
-            Spacer()
-            Button(model.networkCollectionEnabled ? "停止采集" : "启用采集") {
-                model.setNetworkCollectionEnabled(!model.networkCollectionEnabled)
-            }.accessibilityIdentifier("network.toggleCollection")
-        }.padding(.horizontal, 4)
-    }
-
-    private var observationSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: "network").foregroundStyle(.secondary)
-                Text(model.networkObservationLabel.isEmpty
-                     ? String(localized: "当前统计网络待确认")
-                     : model.networkObservationLabel)
-                    .font(.subheadline).lineLimit(2)
-                Spacer()
-                NetworkSettingsButton(model: model, onOpenSettingsFallback: onOpenSettingsFallback)
-                    .buttonStyle(.borderless)
-                    .accessibilityIdentifier("network.openSettings")
-                    .help("选择统计的网络，查看统计说明")
-            }
-            Text(model.networkObservationSourceText).font(.caption2).foregroundStyle(.secondary)
-        }.padding(10).background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9))
-    }
-
-    private var unavailableApps: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Label("按应用统计尚未接入", systemImage: "shield.lefthalf.filled").font(.subheadline.weight(.semibold))
-            Text("当前只能观察单个接口；应用、目标与连接阻断不可用。").font(.caption).foregroundStyle(.secondary)
-        }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
-            .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
+            .accessibilityIdentifier("network.collectionNotice")
+        }
+        if let notice = NetworkStatusRules.historyRestartNotice(
+            name.flatMap { model.networkSnapshot?.interfaces[$0]?.sessionTotal },
+            samples: samples, now: now, window: model.networkTrendRange.duration
+        ) {
+            Text(notice).font(.caption2).foregroundStyle(.orange)
+                .padding(.horizontal, 4)
+                .accessibilityIdentifier("network.historyRestart")
+        }
     }
 }
 
@@ -265,47 +238,73 @@ private struct NetworkPlotView: View, Equatable {
     }
     var body: some View {
         let color = direction == .upload ? NetworkPresentation.uploadColor : NetworkPresentation.downloadColor
+        let coordinates = NetworkChartCoordinates(now: now, window: window, upperBound: safeBound)
             Chart {
                 ForEach(points) { point in
-                    AreaMark(x: .value("时间", point.at), yStart: .value("零", 0), yEnd: .value("速率", point.value), series: .value("段", point.seriesKey))
+                    AreaMark(x: .value("时间", coordinates.x(at: point.at)), yStart: .value("零", 0), yEnd: .value("速率", coordinates.y(for: point.value)), series: .value("段", point.seriesKey))
                         .foregroundStyle(color.opacity(0.09)).interpolationMethod(.linear)
-                    LineMark(x: .value("时间", point.at), y: .value("速率", point.value), series: .value("段", point.seriesKey))
+                        .accessibilityLabel(Text(point.at, format: .dateTime.hour().minute().second()))
+                        .accessibilityValue(Text(NetworkPresentation.rate(point.value)))
+                    LineMark(x: .value("时间", coordinates.x(at: point.at)), y: .value("速率", coordinates.y(for: point.value)), series: .value("段", point.seriesKey))
                         .foregroundStyle(color).interpolationMethod(.linear).lineStyle(.init(lineWidth: 1.5))
+                        .accessibilityLabel(Text(point.at, format: .dateTime.hour().minute().second()))
+                        .accessibilityValue(Text(NetworkPresentation.rate(point.value)))
                     if point.isIsolated {
-                        PointMark(x: .value("时间", point.at), y: .value("速率", point.value)).foregroundStyle(color).symbolSize(20)
+                        PointMark(x: .value("时间", coordinates.x(at: point.at)), y: .value("速率", coordinates.y(for: point.value))).foregroundStyle(color).symbolSize(20)
+                            .accessibilityLabel(Text(point.at, format: .dateTime.hour().minute().second()))
+                            .accessibilityValue(Text(NetworkPresentation.rate(point.value)))
                     }
                 }
             }
             .chartLegend(.hidden)
-            .chartXScale(domain: now.addingTimeInterval(-window)...now)
-            .chartYScale(domain: 0...safeBound)
+            .chartXScale(domain: 0.0...1.0)
+            .chartYScale(domain: 0.0...1.0)
             .chartYAxis {
-                AxisMarks(position: .leading, values: [0, safeBound / 2, safeBound]) { value in
+                AxisMarks(position: .leading, values: NetworkChartCoordinates.ticks) { value in
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
-                    AxisValueLabel { if let rate = value.as(Double.self) { Text(NetworkPresentation.rate(rate)).font(.system(size: 9)).frame(width: 74, alignment: .trailing) } }
+                    AxisValueLabel { if let y = value.as(Double.self) { Text(NetworkPresentation.rate(coordinates.rate(atY: y))).font(.system(size: 9)).frame(width: 74, alignment: .trailing) } }
                 }
             }
             .chartXAxis {
-                AxisMarks(values: [now.addingTimeInterval(-window), now.addingTimeInterval(-window / 2), now]) {
+                AxisMarks(values: NetworkChartCoordinates.ticks) { value in
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [3, 3]))
-                    AxisValueLabel(format: .dateTime.hour().minute(), centered: false)
+                    AxisValueLabel(centered: false) {
+                        if let x = value.as(Double.self) {
+                            Text(coordinates.date(atX: x), format: .dateTime.hour().minute())
+                        }
+                    }
                 }
             }
             .chartOverlay { proxy in
-                NetworkInspectionOverlay(proxy: proxy, inspection: inspection, lastSample: lastSample)
+                NetworkInspectionOverlay(proxy: proxy, coordinates: coordinates, inspection: inspection, lastSample: lastSample)
             }
+            // Charts' automatic AX buckets describe the drawing coordinates.
+            // Replace those children with source samples as well as providing
+            // the original-unit Audio Graph descriptor below.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(direction == .upload ? "上传趋势" : "下载趋势")
+            .accessibilityChildren {
+                ForEach(points) { point in
+                    Rectangle()
+                        .accessibilityElement()
+                        .accessibilityLabel(Text(point.at, format: .dateTime.hour().minute().second()))
+                        .accessibilityValue(NetworkPresentation.rate(point.value))
+                }
+            }
+            .accessibilityChartDescriptor(NetworkChartAccessibility(points: points, direction: direction, coordinates: coordinates))
     }
 }
 
 private struct NetworkInspectionOverlay: View {
     let proxy: ChartProxy
+    let coordinates: NetworkChartCoordinates
     @ObservedObject var inspection: NetworkInspectionState
     let lastSample: Date?
     var body: some View {
         GeometryReader { geometry in
             let plot = geometry[proxy.plotAreaFrame]
             ZStack(alignment: .topLeading) {
-                if let at = inspection.inspectedAt, let x = proxy.position(forX: at), x >= 0, x <= plot.width {
+                if let at = inspection.inspectedAt, let x = proxy.position(forX: coordinates.x(at: at)), x >= 0, x <= plot.width {
                     Rectangle().fill(.secondary.opacity(0.5)).frame(width: 1, height: plot.height)
                         .offset(x: plot.minX + x, y: plot.minY).allowsHitTesting(false)
                 }
@@ -313,7 +312,9 @@ private struct NetworkInspectionOverlay: View {
                     .onContinuousHover { phase in
                         guard !inspection.pinned else { return }
                         switch phase {
-                        case let .active(point): inspection.inspectedAt = proxy.value(atX: point.x - plot.minX)
+                        case let .active(point):
+                            let x: Double? = proxy.value(atX: point.x - plot.minX)
+                            inspection.inspectedAt = x.map { coordinates.date(atX: $0) }
                         case .ended: inspection.inspectedAt = nil
                         }
                     }
@@ -354,3 +355,33 @@ struct NetworkChartKeyboard: NSViewRepresentable {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
+
+#if DEBUG
+/// Exercises the shipping plot implementation without a collector or timer
+/// inside the view. The Debug app harness supplies an accelerated clock.
+public struct NetworkPlotMemoryProbeView: View {
+    public let now: Date
+    public let window: TimeInterval
+    public let points: [NetworkChartPoint]
+    public let upperBound: Double
+    public let onRender: () -> Void
+    @StateObject private var inspection = NetworkInspectionState()
+
+    public init(now: Date, window: TimeInterval, points: [NetworkChartPoint], upperBound: Double, onRender: @escaping () -> Void) {
+        self.now = now; self.window = window; self.points = points
+        self.upperBound = upperBound; self.onRender = onRender
+    }
+
+    public var body: some View {
+        let _ = onRender()
+        VStack(spacing: 16) {
+            ForEach(NetworkChartDirection.allCases, id: \.self) { direction in
+                NetworkPlotView(points: points.filter { $0.direction == direction }, direction: direction,
+                    now: now, window: window, safeBound: direction == .upload ? upperBound : upperBound * 100,
+                    inspection: inspection, lastSample: now)
+                    .frame(height: 140)
+            }
+        }.transaction { $0.animation = nil; $0.disablesAnimations = true }
+    }
+}
+#endif

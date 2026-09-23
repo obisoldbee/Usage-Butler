@@ -595,6 +595,17 @@
         }
       }
     },
+    "功能范围": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "功能范围"
+          }
+        }
+      }
+    },
     "历史最多保留本进程最近 2 小时；退出后不恢复。启动前和未采集时段留空，属于正常情况。": {
       "extractionState": "manual",
       "localizations": {
@@ -624,6 +635,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "只读取额度状态，不发起模型调用"
+          }
+        }
+      }
+    },
+    "可在设置 → 网络中开启采集。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可在设置 → 网络中开启采集。"
           }
         }
       }
@@ -980,6 +1002,17 @@
         }
       }
     },
+    "当前版本统计所选网络接口的上传、下载流量。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前版本统计所选网络接口的上传、下载流量。"
+          }
+        }
+      }
+    },
     "当前统计网络待确认": {
       "extractionState": "manual",
       "localizations": {
@@ -1174,6 +1207,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "指向曲线查看速率，点击可固定读数"
+          }
+        }
+      }
+    },
+    "按应用流量、连接目标和连接阻断尚未提供，不能通过设置开启。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按应用流量、连接目标和连接阻断尚未提供，不能通过设置开启。"
           }
         }
       }
@@ -2318,6 +2362,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "采样中断后重新起算"
+          }
+        }
+      }
+    },
+    "采集状态": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "采集状态"
           }
         }
       }

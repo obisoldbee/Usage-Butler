@@ -23,6 +23,7 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
         runtime.panelController = controller
         panelController = controller
         #if DEBUG
+        if NetworkMemoryValidation.startIfRequested(offline: runtime.launchMode == .offlineFixture) { return }
         if CommandLine.arguments.contains("--show-panel-for-validation") {
             DispatchQueue.main.async { controller.togglePanel() }
         }

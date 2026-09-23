@@ -30,6 +30,10 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 
 正式版仅观察单个系统网络接口，尚无真实按应用/目标采集或连接阻断。完整应用交互仅在明确标识的 Debug 演示中出现，Release 不包含演示应用。本轮采纳范围见[0.3.3 需求与边界](docs/network-v0.3.3-requirements.md)。实现和验证边界见[网络交付说明](docs/network-redesign-brief.md)及[评审入口](docs/network-v2-review-guide.md)。
 
+0.3.4（7）修复网络趋势持续刷新时轴标签累积的内存问题，保留原始时间、速率与辅助功能语义；复现与验收边界见[内存整改](docs/network-memory-regression.md)。
+
+0.3.5（8）将采集状态/开关、统计对象和能力说明集中到“设置 → 网络”；主面板正常时直接显示趋势，保留停止、过期和范围内历史中断提示。[展示调整与应用统计接入边界](docs/network-panel-and-app-observation.md)。
+
 ## 界面预览
 
 ### 订阅额度
