@@ -48,7 +48,7 @@ public actor BackgroundNetworkEngine {
     }
     private func flushTick() async {
         guard !stopped else { return }
-        do { try await store.flush() }
+        do { try await store.flush(); try await store.maintain() }
         catch { storageFailed = true; recovery.cancel(); await collector.setEnabled(false) }
         let source = await collector.backgroundRecoverySource()
         guard !stopped else { return }

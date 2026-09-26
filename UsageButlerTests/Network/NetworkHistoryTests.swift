@@ -237,6 +237,77 @@ final class NetworkHistoryStoreTests: XCTestCase {
         XCTAssertEqual(try raw.scalar("SELECT count(*) FROM applications"), 2); raw.close()
         try await store.close()
     }
+    func testIdentityReturnUsesLastObservationInsideRangeAcrossSessionsAndHours() async throws {
+        let dir = try directory(), store = try NetworkHistoryStore(directory: dir)
+        try await store.accept(frame(1, at: day + 1, upload: 11, name: "A"))
+        try await store.accept(frame(2, at: day + 3601, upload: 13, name: "B"))
+        try await store.close()
+        let reopened = try NetworkHistoryStore(directory: dir)
+        try await reopened.accept(frame(1, at: day + 7201, upload: 17, session: "source-b", name: "A"))
+        try await reopened.flush()
+        let query = NetworkHistoryQuery(databaseURL: reopened.databaseURL)
+        let all = try await query.query(range: .init(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 10800)))
+        XCTAssertEqual(all.applications.first?.identity.name, "A")
+        XCTAssertEqual(all.applications.first?.totals.upload, 41)
+        XCTAssertEqual(all.applications.first?.identitySnapshotCount, 2)
+        let middle = try await query.query(range: .init(start: .init(timeIntervalSince1970: day + 3600), end: .init(timeIntervalSince1970: day + 7200)))
+        XCTAssertEqual(middle.applications.first?.identity.name, "B")
+        XCTAssertEqual(middle.applications.first?.totals.upload, 13)
+        let raw = try HistoryDatabase(path: reopened.databaseURL, readOnly: true)
+        XCTAssertEqual(try raw.scalar("SELECT count(*) FROM applications"), 2)
+        raw.close(); try await reopened.close()
+    }
+    func testIdentityReturnWithinMinuteAndAfterWallClockRollback() async throws {
+        let store = try NetworkHistoryStore(directory: directory())
+        try await store.accept(frame(1, at: day + 10, upload: 11, name: "A"))
+        try await store.accept(frame(2, at: day + 20, upload: 13, name: "B"))
+        try await store.accept(frame(3, at: day + 5, upload: 17, name: "A"))
+        try await store.flush()
+        let result = try await NetworkHistoryQuery(databaseURL: store.databaseURL).query(range: .init(
+            start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60)))
+        XCTAssertEqual(result.applications.first?.identity.name, "A")
+        XCTAssertEqual(result.applications.first?.totals.upload, 41)
+        try await store.close()
+    }
+    func testLegacyReadOnlyDoesNotMigrateAndMigrationDoesNotInventOrder() async throws {
+        let dir = try directory(), store = try NetworkHistoryStore(directory: dir)
+        try await store.accept(frame(1, at: day + 1, upload: 11, name: "A"))
+        try await store.accept(frame(2, at: day + 61, upload: 13, name: "B"))
+        try await store.accept(frame(3, at: day + 121, upload: 17, name: "A"))
+        try await store.close()
+        let legacy = try HistoryDatabase(path: store.databaseURL)
+        try legacy.execute("ALTER TABLE buckets DROP COLUMN last_observation; ALTER TABLE hours DROP COLUMN last_observation; DELETE FROM metadata WHERE key='observation-order'; PRAGMA user_version=1;")
+        let payloads = try legacy.statement("SELECT hex(payload) FROM buckets ORDER BY segment,app,minute")
+        var original: [String] = []
+        while try payloads.next() { original.append(payloads.text(0)) }
+        try legacy.checkpoint(); legacy.close()
+        let before = try Data(contentsOf: store.databaseURL)
+        let query = NetworkHistoryQuery(databaseURL: store.databaseURL)
+        let range = HistoryRange(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 180))
+        let old = try await query.query(range: range)
+        XCTAssertEqual(old.applications.first?.identityOrder, .legacyUnverified)
+        XCTAssertEqual(old.applications.first?.totals.upload, 41)
+        XCTAssertEqual(try Data(contentsOf: store.databaseURL), before)
+        let migrated = try NetworkHistoryStore(directory: dir)
+        let unchanged = try await query.query(range: range)
+        XCTAssertEqual(unchanged.applications.first?.identityOrder, .legacyUnverified)
+        let check = try HistoryDatabase(path: migrated.databaseURL, readOnly: true)
+        XCTAssertEqual(try check.scalar("PRAGMA user_version"), 2)
+        XCTAssertEqual(try check.scalar("SELECT count(*) FROM buckets WHERE last_observation IS NOT NULL"), 0)
+        let after = try check.statement("SELECT hex(payload) FROM buckets ORDER BY segment,app,minute")
+        var preserved: [String] = []
+        while try after.next() { preserved.append(after.text(0)) }
+        XCTAssertEqual(preserved, original); check.close()
+        try await migrated.accept(frame(1, at: day + 61, upload: 19, session: "new-source", name: "C"))
+        try await migrated.flush()
+        let new = try await query.query(range: range)
+        XCTAssertEqual(new.applications.first?.identity.name, "C")
+        XCTAssertEqual(new.applications.first?.identityOrder, .observed)
+        XCTAssertEqual(new.applications.first?.totals.upload, 60)
+        let oldOnly = try await query.query(range: .init(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60)))
+        XCTAssertEqual(oldOnly.applications.first?.identityOrder, .legacyUnverified)
+        try await migrated.close()
+    }
     func testPartialHourEdgesAndCurveDoNotDoubleCount() async throws {
         let store = try NetworkHistoryStore(directory: directory())
         for sequence in 1...125 {
@@ -274,6 +345,102 @@ final class NetworkHistoryStoreTests: XCTestCase {
         let old = try await query.query(range: .init(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60)))
         XCTAssertTrue(old.applications.isEmpty); XCTAssertTrue(old.coverage.retentionTrimmed)
         try await store.close()
+    }
+    func testRetentionSliceIsBoundedAndTombstoneSurvivesReopen() async throws {
+        let dir = try directory(), age = HistoryTestAge(), original = try NetworkHistoryStore(directory: dir, clock: age.read)
+        for n in 1...3 { try await original.accept(frame(UInt64(n), at: day + Double(n), upload: 7, key: "app-\(n)")) }
+        try await original.close()
+        let fixture = try HistoryDatabase(path: original.databaseURL)
+        try fixture.execute("""
+        CREATE TEMP TABLE seed AS SELECT payload FROM buckets LIMIT 1;
+        DELETE FROM buckets;
+        WITH RECURSIVE n(v) AS (VALUES(0) UNION ALL SELECT v+1 FROM n WHERE v<2399)
+        INSERT INTO buckets SELECT 1,1+v/800,v%800,(SELECT payload FROM seed),1 FROM n;
+        """)
+        try fixture.checkpoint(); fixture.close()
+        age.set(15 * 86_400)
+        let store = try NetworkHistoryStore(directory: dir, clock: age.read)
+        try await store.accept(frame(1, at: day + 15*86400 + 1, upload: 19, session: "new", key: "new"))
+        try await store.flush()
+        let read = try HistoryDatabase(path: store.databaseURL, readOnly: true)
+        XCTAssertEqual(try read.scalar("SELECT count(*) FROM buckets WHERE segment=1"), 2400 - 2048)
+        XCTAssertTrue(try HistorySchema.metadata(read).retiredSegments?.contains(1) == true)
+        read.close()
+        let expired = try await NetworkHistoryQuery(databaseURL: store.databaseURL).query(range: .init(
+            start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 86400)))
+        XCTAssertTrue(expired.applications.isEmpty)
+        try await store.close()
+        let reopened = try NetworkHistoryStore(directory: dir, clock: age.read)
+        try await reopened.maintain()
+        let after = try HistoryDatabase(path: reopened.databaseURL, readOnly: true)
+        XCTAssertEqual(try after.scalar("SELECT count(*) FROM segments WHERE age<0"), 0)
+        XCTAssertEqual(try after.scalar("SELECT count(*) FROM applications"), 1)
+        after.close(); try await reopened.close()
+    }
+    func testExpiredCatalogueSlotsAreReclaimedBeforeAdmittingNewIdentity() async throws {
+        let dir = try directory(), age = HistoryTestAge()
+        let original = try NetworkHistoryStore(directory: dir, configuration: .init(catalogueLimit: 4), clock: age.read)
+        for n in 1...4 { try await original.accept(frame(UInt64(n), at: day + Double(n), upload: 7, key: "app-\(n)")) }
+        try await original.close()
+        let fixture = try HistoryDatabase(path: original.databaseURL)
+        try fixture.execute("""
+        CREATE TEMP TABLE seed AS SELECT payload FROM buckets LIMIT 1;
+        DELETE FROM buckets;
+        WITH RECURSIVE n(v) AS (VALUES(0) UNION ALL SELECT v+1 FROM n WHERE v<3999)
+        INSERT INTO buckets SELECT 1,1+v/1000,v%1000,(SELECT payload FROM seed),1 FROM n;
+        """)
+        try fixture.checkpoint(); fixture.close(); age.set(15*86400)
+        let store = try NetworkHistoryStore(directory: dir, configuration: .init(catalogueLimit: 4), clock: age.read)
+        try await store.accept(frame(1, at: day + 15*86400 + 1, upload: 19, session: "new", key: "new"))
+        try await store.flush()
+        let read = try HistoryDatabase(path: store.databaseURL, readOnly: true)
+        XCTAssertLessThanOrEqual(try read.scalar("SELECT count(*) FROM applications"), 4)
+        XCTAssertEqual(try read.scalar("SELECT count(*) FROM buckets WHERE segment=1"), 1952)
+        read.close()
+        let result = try await NetworkHistoryQuery(databaseURL: store.databaseURL).query(range: .init(
+            start: .init(timeIntervalSince1970: day + 15*86400), end: .init(timeIntervalSince1970: day + 15*86400 + 60)))
+        XCTAssertEqual(result.applications.first?.totals.upload, 19)
+        try await store.maintain(); let coverage = await store.coverage(); XCTAssertNil(coverage.issue)
+        try await store.close()
+    }
+    func testRetirementPreservesLiveIdentityAndActivityAndDoesNotReuseRetiredSegmentID() async throws {
+        let dir = try directory(), age = HistoryTestAge()
+        let store = try NetworkHistoryStore(directory: dir, configuration: .init(catalogueLimit: 4), clock: age.read)
+        for n in 1...4 { try await store.accept(frame(UInt64(n), at: day + Double(n), upload: 7, key: "app-\(n)")) }
+        try await store.flush(); age.set(13*86400)
+        try await store.accept(frame(1, at: day + 13*86400 + 1, upload: 200_000_000, session: "retained", key: "app-1"))
+        try await store.flush()
+        let query = NetworkHistoryQuery(databaseURL: store.databaseURL)
+        let liveRange = HistoryRange(start: .init(timeIntervalSince1970: day + 13*86400), end: .init(timeIntervalSince1970: day + 13*86400 + 60))
+        let before = try await query.query(range: liveRange)
+        let event = try XCTUnwrap(before.events.first)
+        age.set(15*86400)
+        try await store.accept(frame(1, at: day + 15*86400 + 1, upload: 19, session: "new", key: "new"))
+        try await store.flush()
+        let after = try await query.query(range: liveRange)
+        XCTAssertEqual(after.applications.first?.totals, before.applications.first?.totals)
+        XCTAssertEqual(after.events.first?.applicationID, event.applicationID)
+        XCTAssertEqual(after.events.first?.name, event.name); XCTAssertEqual(after.events.first?.rule, event.rule)
+        XCTAssertEqual(after.events.first?.bytes, event.bytes)
+        let read = try HistoryDatabase(path: store.databaseURL, readOnly: true)
+        XCTAssertLessThanOrEqual(try read.scalar("SELECT count(*) FROM applications"), 4)
+        XCTAssertLessThanOrEqual(try read.scalar("SELECT count(*) FROM sessions"), 4)
+        read.close(); try await store.close()
+    }
+    func testSameSessionExpirationCannotReactivateAnOlderSegment() async throws {
+        let dir = try directory(), age = HistoryTestAge(), store = try NetworkHistoryStore(directory: dir, clock: age.read)
+        try await store.accept(frame(1, at: day + 1, upload: 11))
+        try await store.accept(frame(2, at: day + 86401, upload: 13)); try await store.flush()
+        age.set(15*86400)
+        // Same session and same UTC day as the second expired segment.
+        try await store.accept(frame(3, at: day + 86402, upload: 17)); try await store.flush()
+        let result = try await NetworkHistoryQuery(databaseURL: store.databaseURL).query(range: .init(
+            start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 2*86400)))
+        XCTAssertEqual(result.applications.first?.totals.upload, 17)
+        let read = try HistoryDatabase(path: store.databaseURL, readOnly: true)
+        XCTAssertEqual(try read.scalar("SELECT count(*) FROM segments WHERE age>=0"), 1)
+        XCTAssertGreaterThan(try read.scalar("SELECT max(id) FROM segments"), 2)
+        read.close(); try await store.close()
     }
     func testPrivateFilesAndSQLLookingIdentityAreData() async throws {
         let directory = try directory(), store = try NetworkHistoryStore(directory: directory)

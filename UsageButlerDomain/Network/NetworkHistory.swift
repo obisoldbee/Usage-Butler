@@ -84,14 +84,24 @@ public struct HistoryTotals: Codable, Equatable, Sendable {
     public init() {}
 }
 
+public enum HistoryIdentityOrder: String, Codable, Equatable, Sendable {
+    case observed
+    case legacyUnverified = "legacy-unverified"
+}
+
 public struct HistoryApplicationSummary: Codable, Equatable, Sendable, Identifiable {
     public let id: Int64
     public let identity: ProcessNetworkApplicationIdentity
     public var totals: HistoryTotals
     public let identitySnapshotCount: Int
-    public init(id: Int64, identity: ProcessNetworkApplicationIdentity, totals: HistoryTotals, identitySnapshotCount: Int = 1) {
+    // Optional on the wire so older frozen snapshots decode conservatively.
+    public let identityObservation: HistoryIdentityOrder?
+    public var identityOrder: HistoryIdentityOrder { identityObservation ?? .legacyUnverified }
+    public init(id: Int64, identity: ProcessNetworkApplicationIdentity, totals: HistoryTotals, identitySnapshotCount: Int = 1,
+                identityOrder: HistoryIdentityOrder = .legacyUnverified) {
         self.id = id; self.identity = identity; self.totals = totals
         self.identitySnapshotCount = identitySnapshotCount
+        identityObservation = identityOrder
     }
 }
 

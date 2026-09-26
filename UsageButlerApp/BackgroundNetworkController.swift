@@ -7,6 +7,14 @@ import UsageButlerDomain
 import UsageButlerInfrastructure
 import UsageButlerUI
 
+@MainActor
+protocol BackgroundNetworkRegistration {
+    var status: SMAppService.Status { get }
+    func register() throws
+    func unregister() async throws
+}
+extension SMAppService: BackgroundNetworkRegistration {}
+
 /// UI-side lifecycle and bounded read client. It never owns a collector,
 /// writer, migration, checkpoint, or fallback nettop process.
 @MainActor
@@ -15,8 +23,9 @@ final class BackgroundNetworkController {
     private let model: BackgroundNetworkViewModel
     private let process: ProcessNetworkViewModel
     private let defaults: UserDefaults
-    private let service = SMAppService.agent(plistName: BackgroundNetworkLocation.plistName)
-    private let client: HistoryXPCClient
+    private let service: any BackgroundNetworkRegistration
+    private let client: any BackgroundNetworkClient
+    private let replyValidator: (@MainActor (BackgroundNetworkStatus?) throws -> Void)?
     private let offlineQuery: UsageButlerInfrastructure.NetworkHistoryQuery
     private let executable: URL
     private let executableSHA256: String
@@ -26,17 +35,32 @@ final class BackgroundNetworkController {
     private var change: Task<Void, Never>?
     private var revision: UInt64 = 0
     private var disconnected = false
+    private var stopConfirmed = false
     private var visible = false
-    init(model: BackgroundNetworkViewModel, process: ProcessNetworkViewModel, defaults: UserDefaults, bundle: Bundle = .main) throws {
-        self.model = model; self.process = process; self.defaults = defaults
-        historyWindow = .init(model: model)
-        offlineQuery = .init(databaseURL: try BackgroundNetworkLocation.directory(bundle: bundle).appendingPathComponent("history-v1.sqlite"))
-        executable = bundle.bundleURL.appendingPathComponent("Contents/MacOS/UsageButlerNetworkAgent")
+    convenience init(model: BackgroundNetworkViewModel, process: ProcessNetworkViewModel, defaults: UserDefaults, bundle: Bundle = .main) throws {
+        let directory = try BackgroundNetworkLocation.directory(bundle: bundle)
+        let executable = bundle.bundleURL.appendingPathComponent("Contents/MacOS/UsageButlerNetworkAgent")
         let peerRequirement = try HistoryCodeIdentity.requirement(for: executable)
-        binding = try HistoryCodeIdentity.requirement(for: bundle.bundleURL) + "|" + peerRequirement
-        client = try .init(serviceName: BackgroundNetworkLocation.serviceName(bundle: bundle), peerRequirement: peerRequirement)
+        let binding = try HistoryCodeIdentity.requirement(for: bundle.bundleURL) + "|" + peerRequirement
+        let client = try HistoryXPCClient(serviceName: BackgroundNetworkLocation.serviceName(bundle: bundle), peerRequirement: peerRequirement)
         let bytes = try Data(contentsOf: executable, options: .mappedIfSafe)
-        executableSHA256 = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        let hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        self.init(model: model, process: process, defaults: defaults,
+            service: SMAppService.agent(plistName: BackgroundNetworkLocation.plistName), client: client,
+            databaseURL: directory.appendingPathComponent("history-v1.sqlite"), executable: executable,
+            executableSHA256: hash, binding: binding)
+    }
+    // Same controller and revision paths in unhosted tests; no real SM, bundle
+    // signature, process, preferences domain or installed database is touched.
+    init(model: BackgroundNetworkViewModel, process: ProcessNetworkViewModel, defaults: UserDefaults,
+         service: any BackgroundNetworkRegistration, client: any BackgroundNetworkClient,
+         databaseURL: URL, executable: URL, executableSHA256: String, binding: String,
+         replyValidator: (@MainActor (BackgroundNetworkStatus?) throws -> Void)? = nil) {
+        self.model = model; self.process = process; self.defaults = defaults
+        self.service = service; self.client = client; self.executable = executable
+        self.executableSHA256 = executableSHA256; self.binding = binding; self.replyValidator = replyValidator
+        historyWindow = .init(model: model)
+        offlineQuery = .init(databaseURL: databaseURL)
         if let data = defaults.data(forKey: "network.backgroundHistory.uploadRule"),
            let rule = try? JSONDecoder().decode(HistoryUploadRule.self, from: data), rule.isValid { model.configuredRule = rule }
         model.onEnabled = { [weak self] value in await self?.setEnabled(value) }
@@ -53,7 +77,9 @@ final class BackgroundNetworkController {
             model.configuredRule = rule
             guard service.status == .enabled else { return }
             var request = BackgroundNetworkRequest(.updateRule); request.rule = rule
+            let token = revision
             let response = try await client.request(request)
+            guard token == revision, !disconnected else { return }
             if let status = response.status { model.status = status }
         }
         model.onQuery = { [weak self] range, app, page, kind in
@@ -79,6 +105,7 @@ final class BackgroundNetworkController {
     func setEnabled(_ enabled: Bool) async {
         guard !disconnected else { return }
         revision &+= 1; let token = revision
+        stopConfirmed = false
         defaults.set(enabled, forKey: Self.preference); model.desired = enabled; model.changing = true
         let previous = change
         let next = Task { [weak self] in
@@ -131,21 +158,30 @@ final class BackgroundNetworkController {
                     guard token == revision, !disconnected else { return }; model.status = configured.status
                 }
             } else {
-                if service.status != .notRegistered {
-                    // A failed graceful reply is not called a successful flush.
-                    // Unregister still enforces the explicit stop intent.
-                    do { _ = try await client.request(.init(.stop)) }
-                    catch { model.serviceIssue = "history.graceful-stop-unconfirmed" }
+                if service.status == .notRegistered { stopConfirmed = true }
+                else {
+                    do {
+                        let response = try await client.request(.init(.stop))
+                        guard token == revision, !disconnected else { return }
+                        try validate(response.status)
+                        guard response.status?.sourceState == .stopped else { throw BackgroundNetworkWire.Failure.invalidResponse }
+                        stopConfirmed = true
+                    } catch {
+                        guard token == revision, !disconnected else { return }
+                        model.serviceIssue = "history.graceful-stop-unconfirmed"
+                    }
                     try await service.unregister()
+                    guard token == revision, !disconnected else { return }
+                    stopConfirmed = true
                 }
                 await client.disconnect()
                 guard token == revision, !disconnected else { return }
-                model.status = nil; process.markBackgroundUnavailable(stopped: true)
+                model.status = nil; process.markBackgroundUnavailable(stopped: stopConfirmed)
             }
         } catch {
             guard token == revision, !disconnected else { return }
             model.serviceIssue = Self.errorCode(error)
-            process.markBackgroundUnavailable(stopped: !enabled)
+            process.markBackgroundUnavailable(stopped: !enabled && stopConfirmed)
         }
         guard token == revision, !disconnected else { return }
         readRegistration(); model.changing = false
@@ -160,6 +196,7 @@ final class BackgroundNetworkController {
         }
     }
     private func validate(_ status: BackgroundNetworkStatus?) throws {
+        if let replyValidator { try replyValidator(status); return }
         guard let status, status.version == BackgroundNetworkWire.version, status.executableSHA256 == executableSHA256 else {
             throw BackgroundNetworkWire.Failure.remote("history.helper-version-mismatch")
         }
@@ -167,10 +204,11 @@ final class BackgroundNetworkController {
         guard proc_pidpath(status.pid, &bytes, UInt32(bytes.count)) > 0,
               String(cString: bytes) == executable.path else { throw BackgroundNetworkWire.Failure.remote("history.helper-identity-mismatch") }
     }
-    private func fetch() async {
+    func fetch() async {
         guard !disconnected, !model.changing else { return }
         let token = revision; readRegistration()
-        guard service.status == .enabled else { process.markBackgroundUnavailable(stopped: !model.desired); return }
+        if !model.desired, stopConfirmed { process.markBackgroundUnavailable(stopped: true); return }
+        guard service.status == .enabled else { process.markBackgroundUnavailable(stopped: false); return }
         var request = BackgroundNetworkRequest(.snapshot); request.selectedKey = process.selected
         do {
             let response = try await client.request(request)

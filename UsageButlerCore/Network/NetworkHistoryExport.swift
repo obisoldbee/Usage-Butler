@@ -26,7 +26,7 @@ public enum NetworkHistoryExport {
             "granularity": "minute aggregates; curve buckets may combine minutes; no proration",
             "privacy": "local aliases; not anonymous; no names, paths, PID, bundle IDs or targets",
             "page": result.page, "pageSize": 64, "totalApplications": result.totalApplications,
-            "applications": result.applications.map { ["alias": aliases[$0.identity.key]!, "identitySnapshotCount": $0.identitySnapshotCount, "totals": totals($0.totals)] as [String: Any] },
+            "applications": result.applications.map { ["alias": aliases[$0.identity.key]!, "identitySnapshotCount": $0.identitySnapshotCount, "identityOrder": $0.identityOrder.rawValue, "totals": totals($0.totals)] as [String: Any] },
             "curve": result.curve.map { ["start": date($0.start), "endExclusive": date($0.end), "segments": $0.segments, "totals": totals($0.totals)] as [String: Any] },
             "utcDays": result.days.map { ["day": date($0.day), "totals": totals($0.totals)] },
             "events": result.events.map { event in

@@ -15,7 +15,9 @@ public actor NetworkHistoryQuery {
               (applicationKey?.utf8.count ?? 0) <= 8_192, applicationID == nil || applicationKey == nil,
               eventKind == nil || eventKind == "large" || eventKind == "sustained" else { throw NetworkHistoryError.invalidRequest }
         let db = try HistoryDatabase(path: path, readOnly: true)
-        guard try db.scalar("PRAGMA user_version") == 1 else { db.close(); throw NetworkHistoryError.unsupportedSchema }
+        let schema = try db.scalar("PRAGMA user_version")
+        guard schema == 1 || schema == 2 else { db.close(); throw NetworkHistoryError.unsupportedSchema }
+        let observationColumn = schema == 2 ? "last_observation" : "NULL"
         let deadline = QueryDeadline()
         sqlite3_progress_handler(db.handle, 2_000, { pointer in
             guard let pointer else { return 1 }
@@ -35,6 +37,7 @@ public actor NetworkHistoryQuery {
             let segments = try db.statement("SELECT id,day FROM segments WHERE age>=0 AND day>=? AND day<=? ORDER BY id LIMIT 8193")
             segments.bind(1, Int64(floor(start / 86_400))); segments.bind(2, Int64(floor((end - 1) / 86_400)))
             var summaries: [Int64: HistoryTotals] = [:]
+            var lastObservations: [Int64: Int64] = [:]
             var daily: [Int64: HistoryTotals] = [:]
             var curve: [Int: HistoryCurveBucket] = [:], lastCurveSegment: [Int: Int64] = [:]
             let widthMinutes = max(1, Int(ceil((end - start) / 60 / 1_440)))
@@ -60,33 +63,35 @@ public actor NetworkHistoryQuery {
                     sourcePartial = try add(sourcePartial, values[2]); sourceObserved = try add(sourceObserved, values[3])
                 }
                 let hourLower = (lower + 59) / 60, hourUpper = upper / 60
-                func accumulate(_ app: Int64, _ minute: HistoryMinute) throws {
+                func accumulate(_ app: Int64, _ minute: HistoryMinute, observation: Int64) throws {
                     try deadline.check()
+                    guard observation >= 0 else { throw NetworkHistoryError.corrupt }
+                    lastObservations[app] = max(lastObservations[app] ?? 0, observation)
                     if summaries[app] == nil, summaries.count >= 8_192 { throw NetworkHistoryError.capacity }
                     summaries[app, default: .init()].merge(minute.totals)
                     daily[day, default: .init()].merge(minute.totals)
                 }
                 let appClause = selectedKey == nil ? "" : " AND app IN (SELECT id FROM applications WHERE stable=?)"
                 if hourUpper > hourLower {
-                    let s = try db.statement("SELECT app,payload FROM hours WHERE segment=?\(appClause) AND minute>=? AND minute<?")
+                    let s = try db.statement("SELECT app,payload,\(observationColumn) FROM hours WHERE segment=?\(appClause) AND minute>=? AND minute<?")
                     s.bind(1, segment); var index: Int32 = 2
                     if let selectedKey { s.bind(index, selectedKey); index += 1 }
                     s.bind(index, hourLower); s.bind(index + 1, hourUpper)
                     while try s.next() {
                         guard let value = HistoryMinute(encoded: s.data(1)) else { throw NetworkHistoryError.corrupt }
-                        try accumulate(s.integer(0), value)
+                        try accumulate(s.integer(0), value, observation: s.integer(2))
                     }
                 }
                 // Exact whole-minute edges, without counting the full hour twice.
                 if lower != hourLower * 60 || upper != hourUpper * 60 || hourUpper <= hourLower {
-                let s = try db.statement("SELECT app,minute,payload FROM buckets WHERE segment=?\(appClause) AND minute>=? AND minute<? AND (minute<? OR minute>=?)")
+                let s = try db.statement("SELECT app,minute,payload,\(observationColumn) FROM buckets WHERE segment=?\(appClause) AND minute>=? AND minute<? AND (minute<? OR minute>=?)")
                 s.bind(1, segment); var index: Int32 = 2
                 if let selectedKey { s.bind(index, selectedKey); index += 1 }
                 s.bind(index, lower); s.bind(index + 1, upper)
                 s.bind(index + 2, hourLower * 60); s.bind(index + 3, max(hourLower, hourUpper) * 60)
                 while try s.next() {
                     guard let value = HistoryMinute(encoded: s.data(2)) else { throw NetworkHistoryError.corrupt }
-                    try accumulate(s.integer(0), value)
+                    try accumulate(s.integer(0), value, observation: s.integer(3))
                 }
                 }
                 if let selectedKey {
@@ -118,10 +123,17 @@ public actor NetworkHistoryQuery {
                 guard let identity = try? JSONDecoder().decode(ProcessNetworkApplicationIdentity.self, from: identities.data(2)) else { throw NetworkHistoryError.corrupt }
                 let key = identities.text(1)
                 var combined = grouped[key]?.totals ?? .init(); combined.merge(totals)
-                // Latest snapshot observed in the queried range is the display
-                // label; immutable older provenance remains in the database.
-                grouped[key] = .init(id: id, identity: identity, totals: combined,
-                    identitySnapshotCount: (grouped[key]?.identitySnapshotCount ?? 0) + 1)
+                let previous = grouped[key]
+                let ordinal = lastObservations[id] ?? 0
+                let useCurrent = previous == nil || ordinal > (lastObservations[previous!.id] ?? 0)
+                // NULL v1 evidence predates the atomic migration boundary;
+                // it supplies totals but cannot claim an observed ordering.
+                // With only legacy evidence the representative is explicitly
+                // unverified, never presented as the latest identity.
+                grouped[key] = .init(id: useCurrent ? id : previous!.id,
+                    identity: useCurrent ? identity : previous!.identity, totals: combined,
+                    identitySnapshotCount: (previous?.identitySnapshotCount ?? 0) + 1,
+                    identityOrder: max(ordinal, previous.map { lastObservations[$0.id] ?? 0 } ?? 0) > 0 ? .observed : .legacyUnverified)
             }
             let ordered = grouped.values.sorted {
                 if $0.totals.upload != $1.totals.upload { return ($0.totals.upload ?? 0) > ($1.totals.upload ?? 0) }

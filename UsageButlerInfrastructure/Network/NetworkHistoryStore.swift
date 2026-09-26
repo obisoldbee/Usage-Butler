@@ -14,12 +14,26 @@ struct HistoryStoreMetadata: Codable, Sendable {
     var clean = true
     var collectionDesired = true
     var recoveredUnclean = false
+    var retiredSegments: [Int64]?
 }
 
 enum HistorySchema {
     static func prepare(_ db: HistoryDatabase) throws {
         let version = try db.scalar("PRAGMA user_version")
-        guard version <= 1 else { throw NetworkHistoryError.unsupportedSchema }
+        guard version <= 2 else { throw NetworkHistoryError.unsupportedSchema }
+        if version == 1 {
+            // No backfill: v1 never recorded observation order. Migration is
+            // atomic and preserves every payload and immutable identity.
+            try db.execute("""
+            BEGIN IMMEDIATE;
+            ALTER TABLE buckets ADD COLUMN last_observation INTEGER;
+            ALTER TABLE hours ADD COLUMN last_observation INTEGER;
+            INSERT INTO metadata VALUES('observation-order',X'30');
+            PRAGMA user_version=2;
+            COMMIT;
+            """)
+            return
+        }
         guard version == 0 else { return }
         guard try db.scalar("SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") == 0 else {
             throw NetworkHistoryError.unsupportedSchema
@@ -33,9 +47,9 @@ enum HistorySchema {
         CREATE TABLE segments(id INTEGER PRIMARY KEY, source TEXT NOT NULL, day INTEGER NOT NULL,
             first REAL NOT NULL, last REAL NOT NULL, age REAL NOT NULL);
         CREATE TABLE buckets(segment INTEGER NOT NULL, app INTEGER NOT NULL, minute INTEGER NOT NULL,
-            payload BLOB NOT NULL CHECK(length(payload)=56), PRIMARY KEY(segment,app,minute)) WITHOUT ROWID;
+            payload BLOB NOT NULL CHECK(length(payload)=56), last_observation INTEGER, PRIMARY KEY(segment,app,minute)) WITHOUT ROWID;
         CREATE TABLE hours(segment INTEGER NOT NULL, app INTEGER NOT NULL, minute INTEGER NOT NULL,
-            payload BLOB NOT NULL CHECK(length(payload)=56), PRIMARY KEY(segment,app,minute)) WITHOUT ROWID;
+            payload BLOB NOT NULL CHECK(length(payload)=56), last_observation INTEGER, PRIMARY KEY(segment,app,minute)) WITHOUT ROWID;
         CREATE TABLE segment_apps(segment INTEGER NOT NULL, app INTEGER NOT NULL, PRIMARY KEY(segment,app)) WITHOUT ROWID;
         CREATE TABLE source_minutes(segment INTEGER NOT NULL, minute INTEGER NOT NULL, samples INTEGER NOT NULL,
             unattributed INTEGER NOT NULL, partial INTEGER NOT NULL, observed INTEGER NOT NULL,
@@ -44,7 +58,8 @@ enum HistorySchema {
             kind TEXT NOT NULL, first REAL NOT NULL, last REAL NOT NULL, bytes BLOB NOT NULL,
             peak REAL NOT NULL, duration REAL NOT NULL, rule BLOB NOT NULL, reason TEXT);
         CREATE INDEX events_time ON events(last,app);
-        PRAGMA user_version=1;
+        INSERT INTO metadata VALUES('observation-order',X'30');
+        PRAGMA user_version=2;
         COMMIT;
         """)
     }
@@ -94,9 +109,11 @@ public actor NetworkHistoryStore {
     private var previousSourceComplete = false
     private var segment: Int64?
     private var segmentDay: Int64?
-    private var lastRetentionAge: Double = 0
+    private var lastRetentionAge: Double = -.infinity
+    private var maintenancePending = true
     private var identities: [String: Int64] = [:]
     private var activities = HistoryActivityAccumulator()
+    private var observationOrdinal: Int64
 
     public init(directory: URL, configuration: Configuration = .init(),
                 clock: @escaping @Sendable () -> HistoryAgeSample = SystemHistoryAgeClock.sample) throws {
@@ -106,8 +123,16 @@ public actor NetworkHistoryStore {
         self.configuration = configuration; self.clock = clock
         let creating = try db.scalar("PRAGMA user_version") == 0
         try HistorySchema.prepare(db)
+        let order = try db.statement("SELECT value FROM metadata WHERE key='observation-order'")
+        guard try order.next(), let ordinal = Int64(String(decoding: order.data(0), as: UTF8.self)), ordinal >= 0 else {
+            throw NetworkHistoryError.corrupt
+        }
+        observationOrdinal = ordinal
         var initial = try HistorySchema.metadata(db, allowMissing: creating)
         initial.recoveredUnclean = !initial.clean; initial.clean = false
+        let retired = initial.retiredSegments ?? []
+        guard retired.count <= configuration.catalogueLimit, retired.allSatisfy({ $0 > 0 }),
+              Set(retired).count == retired.count else { throw NetworkHistoryError.corrupt }
         initial.age.advance(clock()); metadata = initial
         try HistorySchema.write(initial, to: db)
         // An interrupted event is evidence up to its last committed sample,
@@ -120,6 +145,7 @@ public actor NetworkHistoryStore {
         guard !closed else { throw NetworkHistoryError.closed }
         if let failure { throw failure }
         guard frame.applications.count <= 256, frame.session.utf8.count <= 128,
+              Set(frame.applications.map(\.identity.key)).count == frame.applications.count,
               frame.end.timeIntervalSince1970.isFinite,
               (0..<253_402_300_800).contains(frame.end.timeIntervalSince1970) else { throw NetworkHistoryError.invalidRequest }
         do {
@@ -138,13 +164,15 @@ public actor NetworkHistoryStore {
             }
             guard frame.sequence > activeSequence else { return }
             metadata.age.advance(clock())
-            if metadata.age.ageSeconds - lastRetentionAge >= 3_600, !inTransaction {
-                try retain(); lastRetentionAge = metadata.age.ageSeconds
-            }
+            if !inTransaction { try maintenanceSlice() }
             if !inTransaction {
                 if db.sizes.wal > 8 * 1_048_576 || checkpointPending { checkpointPending = try !db.checkpoint(allowBusy: true) }
                 try db.execute("BEGIN IMMEDIATE"); inTransaction = true
             }
+            guard observationOrdinal < Int64.max else { throw NetworkHistoryError.capacity }
+            observationOrdinal += 1
+            let order = try db.statement("UPDATE metadata SET value=? WHERE key='observation-order'")
+            order.bind(1, Data(String(observationOrdinal).utf8)); try order.run()
             let seconds = Double(frame.durationNanoseconds) / 1e9
             let clockChanged = frame.start.map { abs(frame.end.timeIntervalSince($0) - seconds) > 0.25 } ?? false
             let wall = frame.end.timeIntervalSince1970
@@ -153,9 +181,12 @@ public actor NetworkHistoryStore {
                 if clockChanged { activities.finishAll(reason: "wall-clock-changed") }
                 else if segmentDay != nil, segmentDay != day { activities.finishAll(reason: "utc-day-boundary") }
                 guard try db.scalar("SELECT count(*) FROM segments") < configuration.catalogueLimit else { throw NetworkHistoryError.capacity }
-                let s = try db.statement("INSERT INTO segments(source,day,first,last,age) VALUES(?,?,?,?,?)")
-                s.bind(1, frame.session); s.bind(2, day); s.bind(3, wall); s.bind(4, wall); s.bind(5, metadata.age.ageSeconds)
-                try s.run(); segment = sqlite3_last_insert_rowid(db.handle); segmentDay = day
+                let highest = max(try db.scalar("SELECT COALESCE(max(id),0) FROM segments"), metadata.retiredSegments?.max() ?? 0)
+                guard highest < Int64.max else { throw NetworkHistoryError.capacity }
+                let s = try db.statement("INSERT INTO segments(id,source,day,first,last,age) VALUES(?,?,?,?,?,?)")
+                s.bind(1, highest + 1); s.bind(2, frame.session); s.bind(3, day); s.bind(4, wall)
+                s.bind(5, wall); s.bind(6, metadata.age.ageSeconds)
+                try s.run(); segment = highest + 1; segmentDay = day
             }
             guard let segment else { throw NetworkHistoryError.corrupt }
             var quality: HistoryQuality = []
@@ -260,8 +291,9 @@ public actor NetworkHistoryStore {
             guard var existing = HistoryMinute(encoded: query.data(0)) else { throw NetworkHistoryError.corrupt }
             existing.merge(value); merged = existing
         }
-        let update = try db.statement("INSERT INTO \(table) VALUES(?,?,?,?) ON CONFLICT(segment,app,minute) DO UPDATE SET payload=excluded.payload")
+        let update = try db.statement("INSERT INTO \(table)(segment,app,minute,payload,last_observation) VALUES(?,?,?,?,?) ON CONFLICT(segment,app,minute) DO UPDATE SET payload=excluded.payload,last_observation=excluded.last_observation")
         update.bind(1, segment); update.bind(2, app); update.bind(3, minute); update.bind(4, merged.encoded)
+        update.bind(5, observationOrdinal)
         try update.run()
     }
 
@@ -325,62 +357,99 @@ public actor NetworkHistoryStore {
         failure = error as? NetworkHistoryError ?? .corrupt
         pendingFrames = 0; pendingSince = nil
     }
-    private func retain() throws {
+    /// One bounded slice per invocation; callers return to the source loop
+    /// between slices. Never await/yield inside one unbounded deletion loop.
+    /// Tombstones, not a Swift queue, are the durable maintenance cursor.
+    public func maintain() throws {
+        guard !closed else { throw NetworkHistoryError.closed }
+        if let failure { throw failure }
+        guard !inTransaction else { return }
+        do { metadata.age.advance(clock()); try maintenanceSlice() }
+        catch { fail(error); throw failure ?? .corrupt }
+    }
+    private func maintenanceTransaction(_ body: () throws -> Void) throws {
+        if db.sizes.wal > 8 * 1_048_576 { checkpointPending = try !db.checkpoint(allowBusy: true) }
+        try db.execute("BEGIN IMMEDIATE")
+        do { try body(); try db.ensureWriteBudget(); try db.execute("COMMIT") }
+        catch { try? db.execute("ROLLBACK"); throw error }
+    }
+    private func maintenanceSlice() throws {
         let cutoff = metadata.age.ageSeconds - 14 * 86_400
-        guard cutoff > 0 else { return }
-        let candidates = try db.statement("SELECT id FROM segments WHERE age<? LIMIT 256")
-        candidates.bind(1, cutoff); var ids: [Int64] = []
-        while try candidates.next() { ids.append(candidates.integer(0)) }
-        guard !ids.isEmpty else { return }
-        func transaction(_ body: () throws -> Void) throws {
-            if db.sizes.wal > 8 * 1_048_576 { checkpointPending = try !db.checkpoint(allowBusy: true) }
-            try db.execute("BEGIN IMMEDIATE")
-            do { try body(); try db.ensureWriteBudget(); try db.execute("COMMIT") }
-            catch { try? db.execute("ROLLBACK"); throw error }
-        }
-        for id in ids {
-            // Durable tombstone hides this expired segment atomically from
-            // queries. A crash resumes its bounded deletion on next retention.
-            try transaction {
-                let mark = try db.statement("UPDATE segments SET age=-1 WHERE id=?")
-                mark.bind(1, id); try mark.run()
-                metadata.retentionTrimmed = true; try HistorySchema.write(metadata, to: db)
-            }
-            for table in ["buckets", "hours", "source_minutes", "segment_apps", "events"] {
-                let key: String
-                switch table {
-                case "buckets", "hours": key = "segment,app,minute"
-                case "source_minutes": key = "segment,minute"
-                case "segment_apps": key = "segment,app"
-                default: key = "id"
-                }
-                while true {
-                    var removed: Int32 = 0
-                    try transaction {
-                        // Event IDs from different segments interleave across
-                        // many pages; keep this sparse deletion much smaller.
-                        let limit = table == "events" ? 128 : 2048
-                        let chunk = try db.statement("DELETE FROM \(table) WHERE (\(key)) IN (SELECT \(key) FROM \(table) WHERE segment=? LIMIT \(limit))")
-                        chunk.bind(1, id); try chunk.run(); removed = sqlite3_changes(db.handle)
+        if metadata.age.ageSeconds - lastRetentionAge >= 3_600 {
+            lastRetentionAge = metadata.age.ageSeconds
+            if cutoff > 0 {
+                // At most catalogueLimit segment rows. Hide all newly expired
+                // segments atomically before incrementally reclaiming pages.
+                try maintenanceTransaction {
+                    let mark = try db.statement("UPDATE segments SET age=-1 WHERE age>=0 AND age<?")
+                    mark.bind(1, cutoff); try mark.run()
+                    if sqlite3_changes(db.handle) > 0 {
+                        maintenancePending = true; metadata.retentionTrimmed = true
+                        try HistorySchema.write(metadata, to: db)
                     }
-                    if removed == 0 { break }
                 }
             }
-            try transaction {
-                let remove = try db.statement("DELETE FROM segments WHERE id=?")
-                remove.bind(1, id); try remove.run()
-            }
-            if segment == id { segment = nil; segmentDay = nil; activities.finishAll(reason: "retention-boundary") }
         }
-        for sql in [
-            "DELETE FROM sessions WHERE source IN (SELECT source FROM sessions WHERE source NOT IN (SELECT source FROM segments) LIMIT 128)",
-            "DELETE FROM applications WHERE id IN (SELECT id FROM applications WHERE id NOT IN (SELECT app FROM segment_apps) AND id NOT IN (SELECT app FROM events) LIMIT 128)"
-        ] {
-            while true {
-                var removed: Int32 = 0
-                try transaction { try db.execute(sql); removed = sqlite3_changes(db.handle) }
-                if removed == 0 { break }
+        guard maintenancePending else { return }
+        // Move only bounded metadata, not the large child tables. These durable
+        // IDs preserve cleanup ownership while freeing physical segment slots.
+        let available = configuration.catalogueLimit - (metadata.retiredSegments?.count ?? 0)
+        if available > 0 {
+            let expired = try db.statement("SELECT id FROM segments WHERE age<0 ORDER BY id LIMIT \(available)")
+            var ids: [Int64] = []
+            while try expired.next() { ids.append(expired.integer(0)) }
+            if !ids.isEmpty {
+                try maintenanceTransaction {
+                    metadata.retiredSegments = (metadata.retiredSegments ?? []) + ids
+                    let remove = try db.statement("DELETE FROM segments WHERE id=?")
+                    for id in ids { remove.bind(1, id); try remove.run(); remove.reset() }
+                    try HistorySchema.write(metadata, to: db)
+                }
             }
+        }
+        if let segment {
+            let marked = try db.scalar("SELECT count(*) FROM segments WHERE id=\(segment) AND age<0") > 0
+            if (metadata.retiredSegments ?? []).contains(segment) || marked {
+                self.segment = nil; segmentDay = nil; activities.finishAll(reason: "retention-boundary")
+            }
+        }
+        var reclaimed = 0
+        try maintenanceTransaction {
+            // Retired-only identities/sessions need no slot while their hidden
+            // child rows drain. Live activity provenance remains a reference.
+            try db.execute("DELETE FROM applications WHERE id IN (SELECT id FROM applications WHERE id NOT IN (SELECT r.app FROM segment_apps r JOIN segments s ON s.id=r.segment WHERE s.age>=0) AND id NOT IN (SELECT e.app FROM events e JOIN segments s ON s.id=e.segment WHERE s.age>=0) LIMIT 256)")
+            reclaimed += Int(sqlite3_changes(db.handle))
+            try db.execute("DELETE FROM sessions WHERE source IN (SELECT source FROM sessions WHERE source NOT IN (SELECT source FROM segments WHERE age>=0) LIMIT 128)")
+            reclaimed += Int(sqlite3_changes(db.handle))
+        }
+        if reclaimed > 0 { identities.removeAll(keepingCapacity: true) }
+        guard let id = metadata.retiredSegments?.first else {
+            let marked = try db.scalar("SELECT count(*) FROM segments WHERE age<0") > 0
+            maintenancePending = reclaimed > 0 || marked
+            return
+        }
+
+        var remaining = 2_048
+        for table in ["events", "buckets", "hours", "source_minutes", "segment_apps"] {
+            let key: String
+            switch table {
+            case "buckets", "hours": key = "segment,app,minute"
+            case "source_minutes": key = "segment,minute"
+            case "segment_apps": key = "segment,app"
+            default: key = "id"
+            }
+            let limit = min(remaining, table == "events" ? 128 : 2_048)
+            var removed: Int32 = 0
+            try maintenanceTransaction {
+                let chunk = try db.statement("DELETE FROM \(table) WHERE (\(key)) IN (SELECT \(key) FROM \(table) WHERE segment=? LIMIT \(limit))")
+                chunk.bind(1, id); try chunk.run(); removed = sqlite3_changes(db.handle)
+            }
+            remaining -= Int(removed)
+            if removed == limit { return }
+        }
+        try maintenanceTransaction {
+            metadata.retiredSegments?.removeFirst()
+            try HistorySchema.write(metadata, to: db)
         }
         identities.removeAll(keepingCapacity: true)
     }

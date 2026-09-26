@@ -48,7 +48,9 @@ struct NetworkHistoryView: View {
                     if let app = result.applications.first {
                         Text("已观察 ↑ \(NetworkPresentation.bytes(app.totals.upload)) · ↓ \(NetworkPresentation.bytes(app.totals.download))")
                             .font(.callout).monospacedDigit()
-                        Text("所选范围含 \(app.identitySnapshotCount) 份身份快照；显示最近观察到的名称。")
+                        Text(app.identityOrder == .observed
+                             ? "所选范围含 \(app.identitySnapshotCount) 份身份快照；显示最近观察到的名称。"
+                             : "所选范围含 \(app.identitySnapshotCount) 份旧身份快照；观察顺序未记录，显示名称不代表最近身份。")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                 } else {
@@ -58,6 +60,9 @@ struct NetworkHistoryView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(app.identity.name).lineLimit(1)
+                                    if app.identityOrder == .legacyUnverified {
+                                        Text("旧数据：身份顺序未验证").font(.caption2).foregroundStyle(.secondary)
+                                    }
                                     if !app.totals.quality.isEmpty { Text("包含未完整观察时段").font(.caption2).foregroundStyle(.secondary) }
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                                 Text("↑ \(NetworkPresentation.bytes(app.totals.upload))").foregroundStyle(NetworkPresentation.uploadColor)

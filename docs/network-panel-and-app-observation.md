@@ -76,3 +76,18 @@ SQLite mmap关闭、page cache目标2MiB、临时数据使用文件；禁用未�
 历史导出`application-network-history-v2`独立于v1，冻结当前范围/页，预览和保存期间不持有SQLite读事务；默认稳定应用分组别名，精确字节十进制字符串、覆盖与截断状态随附。IPC请求最多64KiB、实际编码响应最多4MiB；查询在独立只读executor上执行，单次约1秒预算，失败明确显示。
 
 0.5.0的构建、测试、SM生命周期、受控流量和资源测量由绑定当前提交的验收记录分别证明。合成14天数据只证明规模，不能声称已连续运行两周；macOS13/Intel实机、真实睡眠/登录重启、完整VoiceOver与24小时运行未验。
+
+
+## 0.5.2 身份次序、维护与连接边界
+
+SQLite `user_version=2` 在分钟和小时桶各新增可空 `last_observation`。唯一 writer 为每个接受且非重放的源帧分配递增 Int64 序号，和桶、会话提交游标在同一事务保存；跨小时、session 和墙钟回退仍按接受顺序，分钟内 A→B→A 可显示最后的 A。每帧同一 stable key 不允许重复，不能从数组顺序制造同帧身份先后。序号溢出可见停写，不回绕。旧 56 字节 payload 和不可变应用身份、活动 provenance 保留。
+
+v1→v2 原子迁移不回填次序；旧桶保持 NULL。查询只读支持 v1/v2，范围完全由旧证据组成时 `identityOrder=legacy-unverified`，显示的是明确标记的代表名称，不能称为最近身份。迁移后新观察序号可证明晚于迁移前所有旧观察，按所选桶/小时的最大序号选名；其他范围仍保持未知，不借当前名称改写。数据库文件名 `history-v1.sqlite` 保持不变，避免产生第二份账本。别名化历史导出仍为 `application-network-history-v2`，应用项新增 `identityOrder`；不导出序号或身份名称。较旧冻结快照缺少该字段时保守视为 legacy-unverified。
+
+过期段每小时按有界目录整体持久标为不可查询，再在单 writer 上逐片回收。过期段ID转存到metadata内有界持久tombstone列表（最多目录上限），先释放物理segments槽位；新段ID避开尚未回收的ID。仅由过期数据引用的身份最多先释放256条、session最多128条，保留仍由未过期段或活动引用的身份。一次维护至多回收一个段的2048条基础记录（活动表优先、每片最多128条）；不会在一次 awaited accept 内循环清空整库。每次源接收的事务边界和5秒 flush tick 可推进一片；有写事务时独立维护不打断它。tombstone 保留到回收完成，重开可继续。整库同时到期时物理回收会跨多次采样，查询已隐藏过期段；这不是即时缩小 SQLite 文件，也不降低1Hz来源或扩大 newest(2) 缓冲。行数预算不等于任意存储故障下的硬实时期限。512MiB库加WAL和提交前预算不变。
+
+XPC 在大小、JSON、协议和 generation 验证后，固定已知业务错误（含 query-busy/request-busy）仅失败当前请求。已认证连接上的单请求超时/取消也不使其他请求失败；取消不声称远端 SQLite 立即停止，晚回复被丢弃。签名/传输、格式、未知错误码、协议或实际响应大小失败撤销连接。新连接与重连共享一次无 key/范围/规则的最小 status 握手，拿到通过签名要求与协议验证的状态后才发业务参数。握手失败/超时保持关门；单个等待者取消不取消别人共享的握手，其等待至多受同一次4秒握手计时约束。
+
+macOS13公开签名要求校验收到的消息，不能把首次出站视为已经验证；见 [Apple DTS 的消息验证说明](https://developer.apple.com/forums/thread/837286) 和 [公开 API 版本说明](https://developer.apple.com/forums/thread/681053)。native transport 的 interruption/invalidation/error 回调立即封闭并在锁外 invalidate，异步 actor 通知之外也检查 transport 状态，防止自动重连继承旧信任。仍保留固定DR与UID边界，不读私有auditToken、不用PID-only身份、不改root服务。
+
+关闭偏好仅代表意图。正常 stop 回复还需校验helper身份并确认sourceState=stopped；成功注销或当前明确未注册也提供停止依据。stop和注销都失败时显示不可用/停止未确认，poll不会根据desired=false推导已停止。新意图revision与断连撤销旧停止、启用、poll和规则回复的更新资格。
