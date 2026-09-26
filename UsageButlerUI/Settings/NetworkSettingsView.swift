@@ -6,10 +6,11 @@ struct NetworkSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            BackgroundHistorySettingsView(model: model.backgroundNetwork)
             SettingsSection(title: String(localized: "网络采集")) {
                 SettingsRow(
                     title: String(localized: "采集网络用量"),
-                    subtitle: String(localized: "统计接口及系统可见应用进程；关闭面板不停止采集")
+                    subtitle: String(localized: "同时设置接口与应用后台采集；实际后台状态见上方")
                 ) {
                     // Show the collector's acknowledged state, not an optimistic preference.
                     Toggle("采集网络用量", isOn: Binding(
@@ -79,8 +80,8 @@ struct NetworkSettingsView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("接口与应用是不同统计口径，不能相加。应用统计包含来源计入的回环和代理腿，不是外网账单；无法看到所有短命进程。")
                     Text("“本段累计”从各方向最近一次有效起点计算；计数重置、缺失或接口变化后会重新开始。")
-                    Text("趋势最多保留本次运行的最近 2 小时；应用共用 65,536 点预算，可能更短。退出后不恢复。启动前和未采集时段留空，属于正常情况。")
-                    Text("上传、下载独立缩放，两张图同样高不代表速率相同。长时间范围会保留峰谷简化绘图，原始样本仍保留。")
+                    Text("接口趋势保留本次主程序运行的最近2小时；应用后台保存14天分钟记录。应用最近1分钟显示原始采样，更长范围显示分钟均速及真实采样峰值。")
+                    Text("上传、下载独立缩放，两张图同样高不代表速率相同。未采集或已清理的时段不会补零；分钟归桶保留边界说明。")
                 }
                 .font(.callout).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -124,7 +125,7 @@ private struct ProcessNetworkSourceStatus: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("应用来源：\(title)").font(.callout)
             Text("nettop 进程 socket 计数 · PTY 分帧约 1 秒延迟 · 目标采样 1 Hz")
-            Text("上限：2,048 进程 / 256 应用 / 65,536 历史点；单应用最多 2 小时。")
+            Text("后台上限：2,048进程 / 256当前应用 / 15,360个最近原始点。客户端只接收已选应用的最近60秒原始历史。")
             if let snapshot = model.snapshot {
                 Text("当前保留 \(snapshot.applications.count) 个应用 / \(snapshot.historyPointCount) 个历史点")
                 if let issue = snapshot.issue { Text("来源诊断：\(issue)") }

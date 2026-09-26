@@ -3,7 +3,7 @@ import Foundation
 /// Uniquely identifies one capture session. A new session starts whenever the
 /// collector (re)starts; events from an old session must never contaminate a
 /// newer session's aggregates.
-public struct CaptureSessionID: RawRepresentable, Equatable, Hashable, Sendable {
+public struct CaptureSessionID: Codable, RawRepresentable, Equatable, Hashable, Sendable {
     public let rawValue: String
 
     public init(rawValue: String) {
@@ -14,7 +14,7 @@ public struct CaptureSessionID: RawRepresentable, Equatable, Hashable, Sendable 
 /// Monotonic counter epoch within a session. Counter resets, counter wrap and
 /// source restarts require a new epoch; a same-epoch decrease is a contract
 /// violation and is surfaced instead of being silently absorbed.
-public struct CounterEpoch: RawRepresentable, Equatable, Hashable, Comparable, Sendable {
+public struct CounterEpoch: Codable, RawRepresentable, Equatable, Hashable, Comparable, Sendable {
     public let rawValue: UInt64
 
     public init(rawValue: UInt64) {

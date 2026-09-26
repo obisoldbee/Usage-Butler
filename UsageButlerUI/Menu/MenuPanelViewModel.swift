@@ -261,6 +261,7 @@ public final class MenuPanelViewModel: ObservableObject {
     public private(set) var networkHistoryRevision: UInt64 = 0
     private var networkChartCache = NetworkChartProjectionCache()
     public let processNetwork = ProcessNetworkViewModel()
+    public let backgroundNetwork = BackgroundNetworkViewModel()
     public func applyProcessNetworkSnapshot(_ value: ProcessNetworkSnapshot) { processNetwork.apply(value) }
     /// Sticky user interface choice. A vanished interface stays selected and
     /// renders unavailable; the caliber never switches silently (NET-02).

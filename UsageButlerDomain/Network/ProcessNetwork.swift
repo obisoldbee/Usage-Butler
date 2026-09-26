@@ -2,7 +2,7 @@ import Foundation
 
 /// A process counter is not a connection. This contract deliberately cannot
 /// manufacture flow counts, endpoints, protocols or rule execution.
-public struct ProcessNetworkIdentity: Equatable, Sendable {
+public struct ProcessNetworkIdentity: Codable, Equatable, Sendable {
     public let pid: Int32
     /// Public proc_bsdinfo start seconds/microseconds + verified executable.
     /// nil means no continuity can be established across samples.
@@ -17,8 +17,8 @@ public struct ProcessNetworkIdentity: Equatable, Sendable {
     }
 }
 
-public struct ProcessNetworkApplicationIdentity: Equatable, Sendable {
-    public enum Evidence: String, Sendable { case executableBundle, nestedBundle, executable, unknown }
+public struct ProcessNetworkApplicationIdentity: Codable, Equatable, Sendable {
+    public enum Evidence: String, Codable, Sendable { case executableBundle, nestedBundle, executable, unknown }
     public let key: String
     public let name: String
     public let bundleID: String?
@@ -33,7 +33,7 @@ public struct ProcessNetworkApplicationIdentity: Equatable, Sendable {
     }
 }
 
-public struct ProcessNetworkCounter: Equatable, Sendable {
+public struct ProcessNetworkCounter: Codable, Equatable, Sendable {
     public let identity: ProcessNetworkIdentity
     public let bytes: DirectionalBytes
     public init(identity: ProcessNetworkIdentity, bytes: DirectionalBytes) {
@@ -55,11 +55,11 @@ public struct ProcessNetworkFrame: Equatable, Sendable {
     }
 }
 
-public enum ProcessNetworkState: String, Equatable, Sendable {
+public enum ProcessNetworkState: String, Codable, Equatable, Sendable {
     case stopped, starting, active, partial, unavailable
 }
 
-public struct ProcessNetworkApplication: Equatable, Sendable {
+public struct ProcessNetworkApplication: Codable, Equatable, Sendable {
     public let identity: ProcessNetworkApplicationIdentity
     public let processes: [ProcessNetworkCounter]
     public let presence: NetworkInterfacePresence
@@ -80,7 +80,7 @@ public struct ProcessNetworkApplication: Equatable, Sendable {
     }
 }
 
-public struct ProcessNetworkSnapshot: Equatable, Sendable {
+public struct ProcessNetworkSnapshot: Codable, Equatable, Sendable {
     public static let sourceID = "system-nettop-process-v1"
     public let sessionID: CaptureSessionID
     public let sequence: UInt64

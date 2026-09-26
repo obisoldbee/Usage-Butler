@@ -11,22 +11,25 @@ import UsageButlerDomain
 public final class NettopProcessSource: ProcessNetworkSource, @unchecked Sendable {
     private let sessionID: CaptureSessionID
     private let record: @Sendable (ProcessNetworkLifecycleEvent) -> Void
+    private let supervisor: NettopChildSupervisor?
     private let lock = NSLock()
     private var worker: Task<Void, Never>?
     private var stopped = false
     private let stream: AsyncStream<ProcessNetworkFrame>
     private let continuation: AsyncStream<ProcessNetworkFrame>.Continuation
     public init(sessionID: CaptureSessionID,
+                supervisor: NettopChildSupervisor? = nil,
                 record: @escaping @Sendable (ProcessNetworkLifecycleEvent) -> Void = { _ in }) {
         self.sessionID = sessionID
         self.record = record
+        self.supervisor = supervisor
         (stream, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(2))
     }
     public func events() -> AsyncStream<ProcessNetworkFrame> {
         lock.lock()
         if worker == nil, !stopped {
-            let id = sessionID, continuation = continuation, record = record
-            worker = Task.detached(priority: .utility) { Self.run(id: id, continuation: continuation, record: record) }
+            let id = sessionID, continuation = continuation, record = record, supervisor = supervisor
+            worker = Task.detached(priority: .utility) { Self.run(id: id, continuation: continuation, record: record, supervisor: supervisor) }
             continuation.onTermination = { [weak self] _ in self?.cancel() }
         }
         lock.unlock()
@@ -55,7 +58,7 @@ public final class NettopProcessSource: ProcessNetworkSource, @unchecked Sendabl
     }
 
     private static func run(id: CaptureSessionID, continuation: AsyncStream<ProcessNetworkFrame>.Continuation,
-                            record: @Sendable (ProcessNetworkLifecycleEvent) -> Void) {
+                            record: @Sendable (ProcessNetworkLifecycleEvent) -> Void, supervisor: NettopChildSupervisor?) {
         var master: Int32 = -1, slave: Int32 = -1
         var sequence: UInt64 = 0
         var terminalReason = ProcessNetworkLifecycleEvent.Reason.cancelled
@@ -96,7 +99,7 @@ public final class NettopProcessSource: ProcessNetworkSource, @unchecked Sendabl
                 while child.isRunning && DispatchTime.now().uptimeNanoseconds < deadline { usleep(10_000) }
                 if child.isRunning { cleanup = .kill; kill(child.processIdentifier, SIGKILL) }
             }
-            if launched { child.waitUntilExit() }
+            if launched { child.waitUntilExit(); supervisor?.reaped(child.processIdentifier) }
             record(.init(kind: .sourceEnded, reason: terminalReason,
                 exitStatus: launched ? child.terminationStatus : nil,
                 exitKind: launched ? (child.terminationReason == .exit ? .exited : .signal) : .notStarted,
@@ -109,7 +112,8 @@ public final class NettopProcessSource: ProcessNetworkSource, @unchecked Sendabl
         if let error = configureOwnedPTYOutput(slave) {
             failure(.ptyConfigurationFailed, error: error); return
         }
-        do { try child.run(); launched = true } catch { failure(.launchFailed); return }
+        do { try child.run(); launched = true; try supervisor?.started(child.processIdentifier) }
+        catch { failure(.launchFailed); return }
         record(.init(kind: .sourceStarted, reason: .launched))
         try? output.close(); try? errors.fileHandleForWriting.close()
         let stderrFD = errors.fileHandleForReading.fileDescriptor

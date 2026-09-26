@@ -21,7 +21,7 @@ public enum CounterSemantics: String, Equatable, Hashable, Sendable {
 /// Byte totals in both directions. Each direction is independently nullable:
 /// a direction that was never observed is `nil`, never zero. Zero is only
 /// reported when the source actually measured zero.
-public struct DirectionalBytes: Equatable, Sendable {
+public struct DirectionalBytes: Codable, Equatable, Sendable {
     public let upload: UInt64?
     public let download: UInt64?
 
@@ -55,7 +55,7 @@ public struct NetworkByteCounters: Equatable, Sendable {
 /// A rate computed as byte delta divided by monotonic time delta. Wall-clock
 /// time is never used for rates, so sleep and wall-clock jumps cannot
 /// manufacture impossible rates.
-public struct NetworkRate: Equatable, Sendable {
+public struct NetworkRate: Codable, Equatable, Sendable {
     public let uploadBytesPerSecond: Double?
     public let downloadBytesPerSecond: Double?
     /// Wall-clock time the rate window ended, for display and staleness.
@@ -92,7 +92,7 @@ public enum NetworkInterfaceKind: String, Equatable, Hashable, Sendable {
 /// to 64 bits recovers nothing that already wrapped. Presenting it as a
 /// since-boot or since-monitoring total without this settlement would be an
 /// unproven claim (PRD §13.5).
-public struct DirectionByteTotal: Equatable, Sendable {
+public struct DirectionByteTotal: Codable, Equatable, Sendable {
     public let bytes: UInt64?
     public let since: Date?
     public let sinceMonotonic: MonotonicInstant?
@@ -109,7 +109,7 @@ public struct DirectionByteTotal: Equatable, Sendable {
 
 /// Each direction covers its current verifiable segment. No shared start is
 /// asserted when only one counter reset; old v1 starts may be unverified.
-public struct SessionByteTotal: Equatable, Sendable {
+public struct SessionByteTotal: Codable, Equatable, Sendable {
     public let upload: DirectionByteTotal
     public let download: DirectionByteTotal
     public var bytes: DirectionalBytes { .init(upload: upload.bytes, download: download.bytes) }

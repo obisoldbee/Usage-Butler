@@ -69,7 +69,7 @@ public enum NetworkInterfaceEnumeration: Equatable, Sendable {
     case failed
 }
 
-public enum NetworkInterfacePresence: String, Equatable, Sendable {
+public enum NetworkInterfacePresence: String, Codable, Equatable, Sendable {
     case present, missing, unknown, notObserved
 }
 

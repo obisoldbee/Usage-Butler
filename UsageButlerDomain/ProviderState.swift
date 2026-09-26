@@ -163,7 +163,7 @@ public enum FreshnessState: Equatable, Sendable {
     case stale(asOf: Date, evaluatedAt: Date)
 }
 
-public struct MonotonicInstant: Equatable, Comparable, Hashable, Sendable {
+public struct MonotonicInstant: Codable, Equatable, Comparable, Hashable, Sendable {
     public let nanoseconds: UInt64
 
     public init(nanoseconds: UInt64) {

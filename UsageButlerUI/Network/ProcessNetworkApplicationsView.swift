@@ -27,6 +27,8 @@ struct ProcessNetworkApplicationsView: View {
                 Text("本地 JSON 导出预览").font(.headline)
                 Text("固定当前快照并使用应用别名；不含名称、路径、PID 或目标。别名化不等于匿名。")
                     .font(.caption).foregroundStyle(.secondary)
+                Text("此 v1 导出只含当前可用的最近 60 秒原始点；长期分钟记录请在历史窗口导出。")
+                    .font(.caption2).foregroundStyle(.secondary)
                 ScrollView { Text(preview?.text ?? "").font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                 HStack {
                     Button("取消") { showPreview = false; preview = nil }.keyboardShortcut(.cancelAction)
@@ -171,8 +173,24 @@ struct ProcessNetworkApplicationsView: View {
                 .font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier("network.apps.segment.upload")
             Text(NetworkStatusRules.applicationSegmentText(app.total.download, direction: String(localized: "下载累计")))
                 .font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier("network.apps.segment.download")
-            NetworkTrendView(range: $model.range, frame: model.frame(for: app, now: now),
-                total: app.total, rate: app.rate, stale: !model.fresh(app, now: now), interface: app.identity.key)
+            if model.onLongHistory == nil || model.range == .oneMinute {
+                NetworkTrendView(range: $model.range, frame: model.frame(for: app, now: now),
+                    total: app.total, rate: app.rate, stale: !model.fresh(app, now: now), interface: app.identity.key)
+            } else {
+                HStack(spacing: 3) {
+                    ForEach(NetworkTrendRange.allCases) { option in
+                        Button { model.range = option } label: {
+                            Text(option.title).font(.system(size: 11)).frame(maxWidth: .infinity, minHeight: 32)
+                                .background(model.range == option ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+                                .foregroundStyle(model.range == option ? Color.white : Color.primary).contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityIdentifier("network.range.\(option.rawValue)")
+                            .accessibilityAddTraits(model.range == option ? .isSelected : [])
+                    }
+                }
+                if let history = model.longHistory { HistoryCurveView(buckets: history.curve, range: history.range) }
+                else if model.longHistoryLoading { ProgressView("读取分钟历史…") }
+                else { Text(model.longHistoryIssue ?? "此范围尚无分钟历史。").font(.caption).foregroundStyle(.secondary) }
+            }
             Text("进程与归属").font(.subheadline.weight(.semibold))
             Text(identityText(app)).font(.caption).foregroundStyle(.secondary)
             ForEach(Array(app.processes.prefix(32).enumerated()), id: \.offset) { _, process in
@@ -238,7 +256,7 @@ private struct ProcessListKeyboard: NSViewRepresentable {
     }
 }
 
-private struct ProcessJSONDocument: FileDocument {
+struct ProcessJSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
     var data: Data
     var text: String { String(decoding: data, as: UTF8.self) }

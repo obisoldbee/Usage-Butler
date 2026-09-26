@@ -41,6 +41,8 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 
 同版修正 CSV 行内控制字符校验、相邻采样周期的连续性与溢出原因保留；JSON 墙钟保留毫秒，应用详情就地解释每方向的累计起点和重新起算原因。
 
+0.5.0（11）加入当前登录用户的独立后台采集：主程序退出后可继续保存实际观察到的应用流量，默认保留14天分钟记录。可调大小的原生历史窗口支持1小时、24小时、7天和14天范围、应用汇总、上传活动筛选及别名化JSON导出。最近1分钟使用原始采样，更长趋势使用分钟均速并单列真实采样峰值。后台可在网络设置中独立停止，已提交历史仍可只读查询；未采集、休眠、注销和关机期间不补造流量。
+
 ## 界面预览
 
 ### 订阅额度
@@ -99,12 +101,15 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 
 `UsageButler.xcodeproj` 是生成产物，不纳入版本控制。
 
+构建启动脚本会先签内嵌后台程序，再签主应用并严格验证。默认使用本地ad-hoc签名；可用 `USAGE_BUTLER_CODESIGN_IDENTITY` 指定本机现有开发签名身份。后台跨构建升级需验证标准SM注销/注册、稳定签名标识和原历史读回；开发签名不代表Developer ID分发或公证。详见[后台与历史合同](docs/network-panel-and-app-observation.md)。
+
 ## 隐私与本地数据
 
 - 应用和仓库不内置 Provider token、API key、Cookie 或用户登录资料。
 - Provider 登录状态由本机的 `codex`、`mmx` 和 `arkcli` 管理。调用这些 CLI 时，CLI 可能按照其自身行为连接对应 Provider 网络。
 - 规范化后的额度缓存写入 `~/Library/Application Support/Usage-Butler/quota-cache/v1/`。
 - 内存历史写入 `~/Library/Application Support/Usage-Butler/memory-history/v1/`。
+- 应用网络分钟历史保存在 `~/Library/Application Support/io.github.obisoldbee.UsageButler/NetworkHistory/history-v1.sqlite`；后台遵循当前用户的系统批准和停止意图。数据包含本地应用身份、已观察字节与覆盖状态，不保存网络载荷或连接目标。
 - 开关、刷新周期、CLI 路径、通知去重标记等偏好通过 macOS `UserDefaults` 保存到应用标识 `io.github.obisoldbee.UsageButler` 的偏好域。
 - 系统通知只在本机显示。飞书通知是可选功能；启用后，通知内容会由本机 `lark-cli` 发送到用户配置的目标会话。
 

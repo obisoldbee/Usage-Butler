@@ -8,6 +8,7 @@ public actor ProcessNetworkCollector {
     private let budget: ProcessNetworkBudget
     private let retrySleep: @Sendable (Duration) async throws -> Void
     private let record: @Sendable (ProcessNetworkLifecycleEvent) -> Void
+    private let settle: @Sendable (ProcessNetworkSettlement) async throws -> Void
     private var source: (any ProcessNetworkSource)?
     private var consumer: Task<Void, Never>?
     private var retiring: Task<Void, Never>?
@@ -28,13 +29,17 @@ public actor ProcessNetworkCollector {
     private var policy: NetworkPublishPolicy = .background
     private var lastPublish: UInt64?
     private var retryCount = 0
+    private var retriesExhausted = false
+    private var healthyWindow = false
     private var recoveryHealth = ProcessNetworkRecoveryHealth()
     public init(budget: ProcessNetworkBudget = .init(),
                 retrySleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) },
                 record: @escaping @Sendable (ProcessNetworkLifecycleEvent) -> Void = { _ in },
+                settle: @escaping @Sendable (ProcessNetworkSettlement) async throws -> Void = { _ in },
                 makeSource: @escaping @Sendable (CaptureSessionID) -> any ProcessNetworkSource) {
         self.budget = budget; self.makeSource = makeSource
         self.retrySleep = retrySleep; self.record = record
+        self.settle = settle
         aggregator.mark(.stopped)
     }
     public func updates() -> AsyncStream<ProcessNetworkSnapshot> {
@@ -64,6 +69,7 @@ public actor ProcessNetworkCollector {
     public func setEnabled(_ value: Bool) async {
         guard !closed, value != enabled else { return }
         enabled = value; generation &+= 1
+        retriesExhausted = false; healthyWindow = false
         recoveryHealth.reset()
         if !value { record(.init(kind: .collectorStopped, reason: .disabled)) }
         let g = generation
@@ -83,25 +89,39 @@ public actor ProcessNetworkCollector {
         let created = makeSource(id); source = created
         aggregator = .init(sessionID: id, budget: budget, retained: aggregator.snapshot()); lastPublish = nil
         recoveryHealth.reset()
+        retriesExhausted = false; healthyWindow = false
         record(.init(kind: .collectorStarted, reason: reason, attempt: retryCount))
         publish(force: true)
         consumer = Task {
             for await frame in created.events() {
                 guard !Task.isCancelled else { break }
-                self.receive(frame, generation: g)
+                await self.receive(frame, generation: g)
             }
             await self.ended(created, generation: g)
         }
     }
-    private func receive(_ frame: ProcessNetworkFrame, generation g: UInt64) {
+    private func receive(_ frame: ProcessNetworkFrame, generation g: UInt64) async {
         guard g == generation, enabled, !closed else { return }
         let oldState = aggregator.state
         let applied = aggregator.apply(frame)
-        if retryCount > 0,
+        if applied, let settlement = aggregator.lastSettlement {
+            do { try await settle(settlement) }
+            catch {
+                guard g == generation, enabled, !closed, !Task.isCancelled else { return }
+                let stoppedGeneration = generation &+ 1
+                await setEnabled(false)
+                guard generation == stoppedGeneration, !enabled, !closed else { return }
+                aggregator.mark(.unavailable, issue: "history-storage-error"); publish(force: true)
+                return
+            }
+        }
+        guard g == generation, enabled, !closed else { return }
+        if !healthyWindow,
            recoveryHealth.observe(frame, accepted: applied && aggregator.state == .active, session: aggregator.sessionID) {
+            healthyWindow = true
             let recovered = retryCount
             retryCount = 0; recoveryHealth.reset()
-            record(.init(kind: .budgetReplenished, reason: .healthyWindow, attempt: recovered))
+            if recovered > 0 { record(.init(kind: .budgetReplenished, reason: .healthyWindow, attempt: recovered)) }
         }
         if applied { publish(force: oldState != aggregator.state) }
     }
@@ -111,8 +131,10 @@ public actor ProcessNetworkCollector {
         source = nil; aggregator.mark(.unavailable, issue: aggregator.currentIssue ?? "source-ended")
         publish(force: true)
         recoveryHealth.reset()
+        healthyWindow = false
         let reason = ProcessNetworkLifecycleEvent.Reason.sourceIssue(aggregator.currentIssue)
         guard retryCount < 3 else {
+            retriesExhausted = true
             record(.init(kind: .retryExhausted, reason: reason, attempt: retryCount)); return
         }
         retryCount += 1
@@ -127,7 +149,7 @@ public actor ProcessNetworkCollector {
         begin(g, reason: .automaticRetry)
     }
     public func refresh() async {
-        if enabled, aggregator.state == .unavailable {
+        if enabled, !closed, !suspended, aggregator.state == .unavailable {
             generation &+= 1
             let g = generation
             consumer?.cancel(); consumer = nil
@@ -166,6 +188,14 @@ public actor ProcessNetworkCollector {
         retryCount = 0; begin(g, reason: .resumed)
     }
     public func currentSnapshot() -> ProcessNetworkSnapshot { aggregator.snapshot() }
+    public func backgroundRecoverySource() -> BackgroundSourceRecovery.Source {
+        .init(generation: generation, enabled: enabled && !closed, suspended: suspended,
+              exhausted: retriesExhausted, healthy: healthyWindow, issue: aggregator.currentIssue)
+    }
+    public func retryExhaustedSource(generation expected: UInt64) async {
+        guard expected == generation, enabled, !closed, !suspended, retriesExhausted else { return }
+        await refresh()
+    }
     private func expireRetainedHistory() {
         guard !closed else { return }
         if aggregator.expire(at: .init(nanoseconds: DispatchTime.now().uptimeNanoseconds)) { publish(force: true) }

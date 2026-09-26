@@ -345,10 +345,12 @@ public struct SettingsRootView: View {
             Divider()
 
             HStack {
-                Button("退出额度管家", action: onQuit)
+                Button("退出额度管家主程序", action: onQuit)
                 Spacer()
             }
             .padding(12)
+            Text("退出主程序不关闭已开启的后台采集；停止后台请到“网络”设置。")
+                .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12)
         }
     }
 

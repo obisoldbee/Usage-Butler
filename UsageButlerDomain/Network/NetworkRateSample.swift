@@ -5,7 +5,7 @@ import Foundation
 /// It is stamped with the *source counter sample* identity, never with the
 /// publish time of the snapshot that happened to carry it. A snapshot that
 /// re-emits an unchanged rate therefore cannot add a phantom "fresh" point.
-public struct NetworkRateSample: Equatable, Sendable {
+public struct NetworkRateSample: Codable, Equatable, Sendable {
     /// Origin of each continuous direction, retained even after history trim.
     public let uploadContinuityID: String?
     public let downloadContinuityID: String?

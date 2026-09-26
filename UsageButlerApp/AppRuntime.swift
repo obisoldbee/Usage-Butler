@@ -15,6 +15,16 @@ final class AppRuntime: ObservableObject {
 
     @Published private(set) var activityMonitorState: ActivityMonitorActionState = .idle
     @Published private(set) var shutdownComplete = false
+    private(set) var terminationDrainTimedOut = false
+    private lazy var quitCoordinator = BoundedQuitCoordinator(schedule: { action in
+        let timer = Timer(timeInterval: 2, repeats: false) { _ in MainActor.assumeIsolated { action() } }
+        RunLoop.main.add(timer, forMode: .common)
+        return { timer.invalidate() }
+    }, terminate: { [weak self] drained in
+        self?.terminationDrainTimedOut = !drained
+        if !drained { NSLog("application_quit drain_unconfirmed") }
+        NSApp.terminate(nil)
+    })
 
     let menuModel: MenuPanelViewModel
     let launchMode: RuntimeLaunchMode
@@ -23,7 +33,7 @@ final class AppRuntime: ObservableObject {
     private let defaults: UserDefaults
     private let activityMonitorLauncher: any ActivityMonitorLaunching
     private let composition: ProductionRuntimeComposition?
-    private let processNetworkCollector: ProcessNetworkCollector?
+    private let backgroundNetwork: BackgroundNetworkController?
     private var validationNetworkCollector: NetworkCollector?
     private var networkIntent: Bool?
     private var networkIntentGeneration: UInt64 = 0
@@ -53,7 +63,7 @@ final class AppRuntime: ObservableObject {
         activityMonitorLauncher: any ActivityMonitorLaunching = ActivityMonitorLauncher()
     ) {
         Self.registerPreferenceDefaults(in: defaults)
-        launchMode = RuntimeLaunchMode.resolve(environment: environment)
+        launchMode = RuntimeLaunchMode.resolve(environment: environment, bundleIdentifier: Bundle.main.bundleIdentifier)
         self.defaults = defaults
         self.activityMonitorLauncher = activityMonitorLauncher
         globalRefreshFrequency = ProviderRefreshFrequency.validated(
@@ -145,8 +155,16 @@ final class AppRuntime: ObservableObject {
         #else
         let useProcessSource = true
         #endif
-        processNetworkCollector = useProcessSource ? ProcessNetworkCollector(record: ProcessNetworkLifecycleLog.record,
-            makeSource: { NettopProcessSource(sessionID: $0, record: ProcessNetworkLifecycleLog.record) }) : nil
+        if useProcessSource {
+            do {
+                backgroundNetwork = try BackgroundNetworkController(model: menuModel.backgroundNetwork,
+                    process: menuModel.processNetwork, defaults: defaults)
+            } catch {
+                backgroundNetwork = nil
+                menuModel.backgroundNetwork.registration = "notFound"
+                menuModel.backgroundNetwork.serviceIssue = "history.embedded-service-unavailable"
+            }
+        } else { backgroundNetwork = nil }
         configureMenuActions()
         menuModel.updateGlobalShortcutText(
             defaults.string(forKey: ProviderPreferenceKey.globalShortcut)
@@ -194,7 +212,10 @@ final class AppRuntime: ObservableObject {
     }
 
     func quit() {
-        NSApp.terminate(nil)
+        // Finish asynchronous drains before entering AppKit's termination
+        // loop. That nested loop cannot re-enter a currently draining main
+        // dispatch queue, so a Task started from terminateLater can stall.
+        quitCoordinator.request { [weak self] completion in self?.prepareForTermination(completion: completion) }
     }
 
     func prepareForTermination(completion: @escaping () -> Void) {
@@ -397,7 +418,7 @@ final class AppRuntime: ObservableObject {
     private func manualRefresh() async {
         if menuModel.selectedPage == .network, let interfaces = interfaceCollector, !isShuttingDown {
             await interfaces.refreshNow()
-            await processNetworkCollector?.refresh()
+            await backgroundNetwork?.refresh()
             return
         }
         guard let composition else {
@@ -412,7 +433,7 @@ final class AppRuntime: ObservableObject {
 
         if menuModel.selectedPage == .network {
             await composition.networkCollector.refreshNow()
-            await processNetworkCollector?.refresh()
+            await backgroundNetwork?.refresh()
             return
         }
 
@@ -777,7 +798,7 @@ final class AppRuntime: ObservableObject {
             await collector.updatePolicy(
                 isNetworkPageActive ? .panelVisible : .background
             )
-            await processNetworkCollector?.updatePolicy(isNetworkPageActive ? .panelVisible : .background)
+            await backgroundNetwork?.updatePolicy(isNetworkPageActive ? .panelVisible : .background)
         }
     }
 
@@ -787,7 +808,7 @@ final class AppRuntime: ObservableObject {
     /// would begin a session from the settings it loaded earlier.
     #if DEBUG
     func debugQuiesceNetworkCollection() async -> String {
-        await processNetworkCollector?.setEnabled(false)
+        await backgroundNetwork?.setEnabled(false)
         guard let collector = composition?.networkCollector else { return "no-collector" }
         await collector.setCollectionEnabled(false)
         await collector.stop()
@@ -809,7 +830,7 @@ final class AppRuntime: ObservableObject {
         let g = networkIntentGeneration
         // Both actors accept the latest intent before any persistence drain.
         async let interfaceChange: Void = collector.applyCollectionIntent(enabled, revision: g)
-        await processNetworkCollector?.applyCollectionIntent(enabled, revision: g)
+        await backgroundNetwork?.setEnabled(enabled)
         await interfaceChange
         guard g == networkIntentGeneration else { return }
     }
@@ -932,7 +953,7 @@ final class AppRuntime: ObservableObject {
         refreshPolicyUpdateTask?.cancel()
         lifecycleRefreshTask?.cancel()
         freshnessTickTask?.cancel()
-        await processNetworkCollector?.shutdown()
+        await backgroundNetwork?.disconnect()
         await validationNetworkCollector?.shutdown()
 
         guard let composition else {
@@ -980,31 +1001,25 @@ final class AppRuntime: ObservableObject {
         guard !isShuttingDown, networkPowerSuspended != suspended else { return }
         networkPowerSuspended = suspended; networkPowerGeneration &+= 1
         let revision = networkPowerGeneration
-        let processes = processNetworkCollector, interfaces = interfaceCollector
+        let interfaces = interfaceCollector
         networkPowerTask?.cancel()
         // Assign one intent before either asynchronous drain. Each actor also
         // rejects late revisions, so an old sleep cannot arrive after wake.
         networkPowerTask = Task {
-            async let processChange: Void? = processes?.applyPowerIntent(suspended: suspended, revision: revision)
-            async let interfaceChange: Void? = interfaces?.applyPowerIntent(suspended: suspended, revision: revision)
-            _ = await (processChange, interfaceChange)
+            await interfaces?.applyPowerIntent(suspended: suspended, revision: revision)
         }
     }
 
     private func startProcessObservation() async {
-        guard let collector = processNetworkCollector, let interfaces = interfaceCollector, !isShuttingDown else { return }
-        observationTasks.append(Task { @MainActor [weak self] in
-            for await snapshot in await collector.updates() {
-                guard !Task.isCancelled else { return }
-                self?.menuModel.applyProcessNetworkSnapshot(snapshot)
-            }
-        })
+        guard let backgroundNetwork, let interfaces = interfaceCollector, !isShuttingDown else { return }
         let enabled = await interfaces.collectionIsEnabled()
         guard !isShuttingDown, !Task.isCancelled else { return }
-        await collector.applyCollectionIntent(networkIntent ?? enabled, revision: networkIntentGeneration)
+        await backgroundNetwork.start(initiallyEnabled: networkIntent ?? enabled)
     }
 
     #if DEBUG
+    func debugBackgroundReady() async { await startTask?.value }
+    func debugBackgroundRefresh() async { await backgroundNetwork?.refresh() }
     private func startValidationNetwork() async {
         guard let interfaces = validationNetworkCollector else { return }
         let path = SystemConfigurationNetworkPathReader()

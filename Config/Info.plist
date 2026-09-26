@@ -30,5 +30,7 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>UsageButlerAgentServiceName</key>
+    <string>$(AGENT_SERVICE_NAME)</string>
 </dict>
 </plist>

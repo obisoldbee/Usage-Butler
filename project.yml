@@ -105,6 +105,24 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
 
+  UsageButlerNetworkAgent:
+    type: tool
+    platform: macOS
+    sources:
+      - UsageButlerNetworkAgent
+    dependencies:
+      - target: UsageButlerDomain
+      - target: UsageButlerCore
+      - target: UsageButlerInfrastructure
+    settings:
+      base:
+        PRODUCT_NAME: UsageButlerNetworkAgent
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.obisoldbee.UsageButler.NetworkAgent
+        OTHER_CODE_SIGN_FLAGS: "$(inherited) --identifier $(PRODUCT_BUNDLE_IDENTIFIER)"
+        SKIP_INSTALL: YES
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+
   UsageButlerApp:
     type: application
     platform: macOS
@@ -121,6 +139,28 @@ targets:
       - target: UsageButlerProviders
       - target: UsageButlerInfrastructure
       - target: UsageButlerUI
+      - target: UsageButlerNetworkAgent
+        embed: false
+    postBuildScripts:
+      - name: Embed background network agent
+        basedOnDependencyAnalysis: false
+        script: |
+          set -eu
+          destination="${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}"
+          mkdir -p "${destination}/Library/LaunchAgents"
+          cp "${BUILT_PRODUCTS_DIR}/UsageButlerNetworkAgent" "${destination}/MacOS/UsageButlerNetworkAgent"
+          cp "${SRCROOT}/Config/NetworkAgent.plist" "${destination}/Library/LaunchAgents/io.github.obisoldbee.UsageButler.network-agent.plist"
+          plist="${destination}/Library/LaunchAgents/io.github.obisoldbee.UsageButler.network-agent.plist"
+          /usr/libexec/PlistBuddy -c "Set :Label ${AGENT_SERVICE_NAME}" "${plist}"
+          /usr/libexec/PlistBuddy -c "Delete :MachServices" "${plist}"
+          /usr/libexec/PlistBuddy -c "Add :MachServices dict" "${plist}"
+          /usr/libexec/PlistBuddy -c "Add :MachServices:${AGENT_SERVICE_NAME} bool true" "${plist}"
+        inputFiles:
+          - $(SRCROOT)/Config/NetworkAgent.plist
+          - $(BUILT_PRODUCTS_DIR)/UsageButlerNetworkAgent
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/MacOS/UsageButlerNetworkAgent
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/io.github.obisoldbee.UsageButler.network-agent.plist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.github.obisoldbee.UsageButler
@@ -132,8 +172,9 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: NO
-        MARKETING_VERSION: 0.4.1
-        CURRENT_PROJECT_VERSION: 10
+        AGENT_SERVICE_NAME: io.github.obisoldbee.UsageButler.network-agent
+        MARKETING_VERSION: 0.5.0
+        CURRENT_PROJECT_VERSION: 11
         SWIFT_EMIT_LOC_STRINGS: YES
 
   UsageButlerTests:

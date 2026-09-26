@@ -25,6 +25,8 @@ PROJECT_PATH="$SOURCE_ROOT/UsageButler.xcodeproj"
 DERIVED_DATA_PATH="$SOURCE_ROOT/.build/DerivedData"
 APP_BUNDLE="$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
+HELPER_BINARY="$APP_BUNDLE/Contents/MacOS/UsageButlerNetworkAgent"
+SIGNING_IDENTITY="${USAGE_BUTLER_CODESIGN_IDENTITY:--}"
 
 resolve_xcodegen() {
   if command -v xcodegen >/dev/null 2>&1; then
@@ -114,6 +116,14 @@ build_app() {
     CODE_SIGNING_ALLOWED=NO \
     build
   [[ -x "$APP_BINARY" ]]
+  [[ -x "$HELPER_BINARY" ]]
+  # The background service and authenticated IPC require valid embedded code.
+  # Keep identifiers stable; use one identity for helper and containing App.
+  /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none \
+    --identifier "$BUNDLE_ID.NetworkAgent" "$HELPER_BINARY"
+  /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none \
+    --identifier "$BUNDLE_ID" "$APP_BUNDLE"
+  /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
 }
 
 open_app() {
@@ -185,7 +195,6 @@ case "$MODE" in
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
     ;;
   --network-panel)
-    /usr/bin/codesign --force --deep --sign - "$APP_BUNDLE"
     validation_args=(--show-panel-for-validation --network-v2-window)
     if [[ -n "${USAGE_BUTLER_VALIDATION_RECORDS:-}" ]]; then
       validation_args+=("--network-validation-records=$USAGE_BUTLER_VALIDATION_RECORDS")

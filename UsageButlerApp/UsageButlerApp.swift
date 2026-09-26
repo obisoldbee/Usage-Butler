@@ -8,7 +8,7 @@ import UsageButlerCore
 @MainActor
 final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
     weak var runtime: AppRuntime?
-    private var terminationDeadline: DispatchWorkItem?
+    private var terminationDeadline: Timer?
     private var hasRepliedToTermination = false
     private var panelController: PanelPresentationController?
 
@@ -42,6 +42,7 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
         #endif
         NetworkCurveValidation.startIfRequested(runtime: runtime, panel: controller)
         ProcessNetworkValidationRecorder.start(runtime: runtime, panel: controller)
+        BackgroundHistoryValidation.start(runtime: runtime)
         #endif
     }
 
@@ -49,7 +50,7 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication
     ) -> NSApplication.TerminateReply {
         guard let runtime else { return .terminateNow }
-        guard !runtime.shutdownComplete else { return .terminateNow }
+        guard !runtime.shutdownComplete, !runtime.terminationDrainTimedOut else { return .terminateNow }
         guard !hasRepliedToTermination else { return .terminateNow }
         guard terminationDeadline == nil else { return .terminateLater }
 
@@ -57,26 +58,23 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let sender else { return }
             replyToTerminationOnce(sender)
         }
-        // A dispatch item rather than a Task. `terminate:` can be reached from
-        // inside a main-actor task that has not returned yet; AppKit then spins
-        // a nested event loop that keeps running the main queue but never
-        // resumes that task, and the deadline — the only guarantee that a reply
-        // is ever sent — would sit behind the thing it is meant to escape.
-        let deadline = DispatchWorkItem { [weak self, weak sender] in
+        // Run-loop timer also fires inside AppKit's nested termination loop;
+        // the main dispatch queue itself cannot be re-entered from that loop.
+        let deadline = Timer(timeInterval: 2, repeats: false) { [weak self, weak sender] _ in
             MainActor.assumeIsolated {
                 guard let self, let sender else { return }
                 self.replyToTerminationOnce(sender)
             }
         }
         terminationDeadline = deadline
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2, execute: deadline)
+        RunLoop.main.add(deadline, forMode: .common)
         return .terminateLater
     }
 
     private func replyToTerminationOnce(_ sender: NSApplication) {
         guard !hasRepliedToTermination else { return }
         hasRepliedToTermination = true
-        terminationDeadline?.cancel()
+        terminationDeadline?.invalidate()
         terminationDeadline = nil
         sender.reply(toApplicationShouldTerminate: true)
     }
@@ -115,7 +113,7 @@ struct UsageButlerApp: App {
             }
 
             CommandGroup(replacing: .appTermination) {
-                Button("退出额度管家") {
+                Button("退出主程序（后台按设置继续）") {
                     runtime.quit()
                 }
                 .keyboardShortcut("q", modifiers: .command)

@@ -54,6 +54,7 @@ public struct ProcessNetworkAggregator: Sendable {
     public let sessionID: CaptureSessionID
     public let budget: ProcessNetworkBudget
     public private(set) var sequence: UInt64 = 0
+    public private(set) var lastSettlement: ProcessNetworkSettlement?
     private var previous: [String: ProcessNetworkCounter] = [:]
     private var previousGroups: [String: Set<String>] = [:]
     private var states: [String: State] = [:]
@@ -111,6 +112,7 @@ public struct ProcessNetworkAggregator: Sendable {
         }
     }
     @discardableResult public mutating func apply(_ frame: ProcessNetworkFrame) -> Bool {
+        lastSettlement = nil
         let e = frame.envelope
         guard e.sessionID == sessionID, e.sequence > sequence,
               envelope.map({ e.monotonicOccurredAt > $0.monotonicOccurredAt }) ?? true else { return false }
@@ -142,6 +144,7 @@ public struct ProcessNetworkAggregator: Sendable {
                     name: identity.name, evidence: .unknown)), bytes: row.bytes)
         }
         var groups = Dictionary(grouping: rows, by: { $0.identity.application.key })
+        let admissionTruncated = groups.count > budget.applications || frame.processes.count > budget.processes
         if groups.count > budget.applications {
             truncated = true; sourceState = .partial; issue = "application-limit"
             // Deterministic bounded admission. Existing observed groups first.
@@ -160,6 +163,7 @@ public struct ProcessNetworkAggregator: Sendable {
         for key in victims.prefix(removeCount) { states.removeValue(forKey: key); truncated = true }
         var nextPrevious: [String: ProcessNetworkCounter] = [:]
         var nextGroups: [String: Set<String>] = [:]
+        var settled: [ProcessNetworkSettlement.Application] = []
         for key in states.keys where groups[key] == nil {
             states[key]?.presence = complete ? .missing : .unknown
             states[key]?.rate = nil
@@ -201,8 +205,17 @@ public struct ProcessNetworkAggregator: Sendable {
                     direction.reset(frame, reason: reason); return nil
                 }
             }
-            let upRate = settle(delta(upload: true), direction: &s.up)
-            let downRate = settle(delta(upload: false), direction: &s.down)
+            let uploadDelta = delta(upload: true), downloadDelta = delta(upload: false)
+            let upRate = settle(uploadDelta, direction: &s.up)
+            let downRate = settle(downloadDelta, direction: &s.down)
+            func exact(_ delta: Delta, rate: Double?) -> UInt64? {
+                if rate != nil, case let .value(bytes) = delta { return bytes }
+                return nil
+            }
+            settled.append(.init(identity: first.identity.application,
+                upload: exact(uploadDelta, rate: upRate), download: exact(downloadDelta, rate: downRate),
+                uploadIssue: upRate == nil ? s.up.reason : nil,
+                downloadIssue: downRate == nil ? s.down.reason : nil))
             s.identity = first.identity.application; s.processes = members
             s.presence = complete ? .present : .unknown; s.date = e.occurredAt; s.mono = e.monotonicOccurredAt
             s.rate = .init(uploadBytesPerSecond: upRate, downloadBytesPerSecond: downRate,
@@ -219,6 +232,12 @@ public struct ProcessNetworkAggregator: Sendable {
         }
         previous = nextPrevious; previousGroups = nextGroups; previousComplete = complete
         previousCadence = validCadence ? frame.samplingInterval : nil
+        lastSettlement = .init(session: sessionID.rawValue, sequence: e.sequence,
+            start: envelope?.occurredAt, end: e.occurredAt, monotonicEnd: e.monotonicOccurredAt.nanoseconds,
+            durationNanoseconds: envelope.map { e.monotonicOccurredAt.nanoseconds - $0.monotonicOccurredAt.nanoseconds } ?? 0,
+            complete: sourceState == .active, lostFrames: gap ? e.sequence - (envelope?.sequence ?? e.sequence) - 1 : 0,
+            admissionTruncated: admissionTruncated, issue: issue,
+            applications: settled)
         envelope = e
         let perApp = min(budget.historyPerApplication, budget.totalHistory / max(1, states.count))
         let cutoff = e.monotonicOccurredAt.nanoseconds > 7_200_000_000_000 ? e.monotonicOccurredAt.nanoseconds - 7_200_000_000_000 : 0

@@ -37,18 +37,26 @@ enum NetworkPresentation {
 
 struct NetworkOverviewView: View {
     @ObservedObject var model: MenuPanelViewModel
-    @State private var applications = true
+    @State private var networkView = "applications"
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = context.date
             VStack(alignment: .leading, spacing: 12) {
                 if !model.isFixtureMode {
-                    Picker("网络视图", selection: $applications) {
-                        Text("应用活动").tag(true)
-                        Text("接口趋势").tag(false)
+                    Picker("网络视图", selection: $networkView) {
+                        Text("应用活动").tag("applications")
+                        Text("接口趋势").tag("interfaces")
                     }.pickerStyle(.segmented).accessibilityIdentifier("network.view")
                 }
-                if applications && !model.isFixtureMode {
+                if !model.isFixtureMode {
+                    HStack {
+                        Text("后台保存已观察记录，默认14天").font(.caption2).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("查看历史") { model.backgroundNetwork.onOpenHistory?() }
+                            .accessibilityIdentifier("network.history.openWindow")
+                    }
+                }
+                if networkView == "applications" && !model.isFixtureMode {
                     ProcessNetworkApplicationsView(model: model.processNetwork, now: now)
                 } else {
                     let name = model.resolvedNetworkInterfaceName

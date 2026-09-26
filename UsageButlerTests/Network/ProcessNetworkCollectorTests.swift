@@ -9,13 +9,31 @@ private actor ProcessTestLatch {
     func wait() async { if !released { await withCheckedContinuation { waiters.append($0) } } }
     func open() { released = true; let all = waiters; waiters.removeAll(); all.forEach { $0.resume() } }
 }
+private actor ThrowFirstSettlement {
+    enum Failure: Error { case synthetic }
+    let entered: ProcessTestLatch, release: ProcessTestLatch
+    var first = true
+    init(entered: ProcessTestLatch, release: ProcessTestLatch) { self.entered = entered; self.release = release }
+    func accept(_ value: ProcessNetworkSettlement) async throws {
+        guard first else { return }; first = false
+        await entered.open(); await release.wait(); throw Failure.synthetic
+    }
+}
 private final class ControlledProcessSource: ProcessNetworkSource, @unchecked Sendable {
     let id: CaptureSessionID
     let started = ProcessTestLatch(), stopping = ProcessTestLatch(), drain = ProcessTestLatch()
+    let secondStopCompleted = ProcessTestLatch()
+    private let stopLock = NSLock()
+    private var stopCount = 0
     let pair = AsyncStream<ProcessNetworkFrame>.makeStream()
     init(_ id: CaptureSessionID) { self.id = id }
     func events() -> AsyncStream<ProcessNetworkFrame> { Task { await started.open() }; return pair.stream }
-    func stop() async { await stopping.open(); await drain.wait(); pair.continuation.finish() }
+    private func countStop() -> Int { stopLock.lock(); defer { stopLock.unlock() }; stopCount += 1; return stopCount }
+    func stop() async {
+        let count = countStop()
+        await stopping.open(); await drain.wait(); pair.continuation.finish()
+        if count >= 2 { await secondStopCompleted.open() }
+    }
     func emit(_ sequence: UInt64) {
         pair.continuation.yield(.init(envelope: .init(sessionID: id, sequence: sequence,
             occurredAt: Date(), monotonicOccurredAt: .init(nanoseconds: sequence * 1_000_000_000)),
@@ -54,6 +72,27 @@ private actor PowerSettingsStore: NetworkSettingsStore {
 
 @MainActor
 final class ProcessNetworkCollectorTests: XCTestCase {
+    func testOldThrowingSettlementCannotStopNewGeneration() async {
+        let f = ProcessTestFactory(), entered = ProcessTestLatch(), release = ProcessTestLatch()
+        let sink = ThrowFirstSettlement(entered: entered, release: release)
+        let collector = ProcessNetworkCollector(settle: { try await sink.accept($0) }, makeSource: { f.make($0) })
+        await collector.updatePolicy(.init(minimumInterval: .zero))
+        await collector.setEnabled(true)
+        let first = f.sources[0]; await first.started.wait(); await first.drain.open()
+        first.emit(1); await entered.wait()
+        await collector.setEnabled(false); await collector.setEnabled(true)
+        let second = f.sources[1]; await second.started.wait(); await second.drain.open()
+        let stream = await collector.updates()
+        let active = Task { () -> ProcessNetworkSnapshot? in
+            for await value in stream where value.sessionID == second.id && value.sequence == 1 { return value }
+            return nil
+        }
+        second.emit(1); let newActive = await active.value; XCTAssertEqual(newActive?.state, .active)
+        await release.open(); await first.secondStopCompleted.wait()
+        let result = await collector.currentSnapshot()
+        XCTAssertEqual(result.sessionID, second.id); XCTAssertEqual(result.state, .active)
+        XCTAssertEqual(f.sources.count, 2); await collector.shutdown()
+    }
     func testPairedPowerIntentRejectsOldSleepAfterWakeWhileProcessDrainIsBlocked() async {
         let f = ProcessTestFactory(), interfaces = PowerInterfaceFactory()
         let process = ProcessNetworkCollector(makeSource: { f.make($0) })

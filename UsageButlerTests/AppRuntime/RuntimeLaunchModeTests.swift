@@ -3,6 +3,18 @@ import XCTest
 
 #if USAGE_BUTLER_FIXTURES
 final class RuntimeLaunchModeTests: XCTestCase {
+    func testHistoryValidationIdentityRemainsIsolatedWithoutLaunchEnvironment() {
+        for identifier in ["io.github.obisoldbee.UsageButler.Validation.History20260926",
+                           "io.github.obisoldbee.UsageButler.Validation.HistoryDev20260926"] {
+            XCTAssertEqual(RuntimeLaunchMode.resolve(environment: [:], bundleIdentifier: identifier), .networkValidation)
+        }
+    }
+
+    func testProductionIdentityIsNotChangedByValidationIdentityGuard() {
+        XCTAssertEqual(RuntimeLaunchMode.resolve(environment: [:], bundleIdentifier: "io.github.obisoldbee.UsageButler"), .production)
+        XCTAssertEqual(RuntimeLaunchMode.resolve(environment: [:], bundleIdentifier: "example.History"), .production)
+    }
+
     func testExplicitOneSelectsOfflineFixtureMode() {
         XCTAssertEqual(
             RuntimeLaunchMode.resolve(environment: [

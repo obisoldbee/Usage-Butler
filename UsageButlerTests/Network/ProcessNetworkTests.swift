@@ -7,6 +7,26 @@ import UsageButlerDomain
 @testable import UsageButlerUI
 
 final class ProcessNetworkTests: XCTestCase {
+    func testSettlementPreservesExactDeltaBeyondDoubleIntegerRange() {
+        var aggregator = ProcessNetworkAggregator(sessionID: session)
+        aggregator.apply(frame(1, [row(up: 0, down: 0)]))
+        aggregator.apply(frame(2, [row(up: (1 << 53) + 1, down: 0)]))
+        XCTAssertEqual(aggregator.lastSettlement?.applications.first?.upload, (1 << 53) + 1)
+        XCTAssertEqual(aggregator.lastSettlement?.applications.first?.download, 0)
+        XCTAssertEqual(aggregator.lastSettlement?.durationNanoseconds, 1_000_000_000)
+        XCTAssertFalse(aggregator.apply(frame(2, [row(up: UInt64.max)])))
+        XCTAssertNil(aggregator.lastSettlement)
+    }
+    func testAdmissionPartialDoesNotEraseAdmittedExactDirectionBytes() {
+        var aggregator = ProcessNetworkAggregator(sessionID: session, budget: .init(applications: 1))
+        aggregator.apply(frame(1, [row(app: "a", up: 0), row(11, id: "11:1", app: "b", up: 0)]))
+        aggregator.apply(frame(2, [row(app: "a", up: 10), row(11, id: "11:1", app: "b", up: 500)]))
+        XCTAssertEqual(aggregator.lastSettlement?.applications.count, 1)
+        XCTAssertEqual(aggregator.lastSettlement?.applications.first?.upload, 10)
+        XCTAssertEqual(aggregator.lastSettlement?.complete, false)
+        XCTAssertEqual(aggregator.lastSettlement?.admissionTruncated, true)
+        XCTAssertEqual(aggregator.lastSettlement?.issue, "application-limit")
+    }
     let session = CaptureSessionID(rawValue: "test-process-session")
     func row(_ pid: Int32 = 10, id: String? = "10:1", app: String = "app",
              up: UInt64? = 100, down: UInt64? = 200) -> ProcessNetworkCounter {
