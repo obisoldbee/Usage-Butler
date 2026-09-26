@@ -11,6 +11,7 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
 
     public let capacity: Int
     private var samples: [String: [NetworkRateSample]] = [:]
+    private var lastExpiryTime: MonotonicInstant?
     /// Points suppressed because they repeated an already buffered source
     /// sample. Visible so a caller cannot mistake a quiet buffer for a
     /// recording one.
@@ -19,6 +20,9 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
     public init(capacity: Int = NetworkRateHistoryBuffer.defaultCapacity, series: [String: [NetworkRateSample]] = [:]) {
         self.capacity = max(1, capacity)
         samples = series.mapValues { Array($0.suffix(max(1, capacity))) }
+        lastExpiryTime = samples.values.reduce(nil as MonotonicInstant?) { latest, series in
+            series.reduce(latest) { latest, point in max(latest ?? point.sampledMonotonic, point.sampledMonotonic) }
+        }
     }
 
     public var count: Int { samples.values.reduce(0) { $0 + $1.count } }
@@ -38,12 +42,14 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
             samples = history.mapValues { series in
                 Self.identifyingContinuity(Array(series.suffix(capacity)))
             }
+            _ = expire(at: snapshot.monotonicAsOf)
             return
         }
         for (name, rate) in snapshot.interfaceRates {
             guard let source = snapshot.interfaces[name] else { continue }
             record(source: source, rate: rate, session: snapshot.sessionID)
         }
+        _ = expire(at: snapshot.monotonicAsOf)
     }
 
     public mutating func record(source: InterfaceCounters, rate: NetworkRate?, session: CaptureSessionID) {
@@ -65,11 +71,30 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
         series.append(Self.identify(next, after: series.last))
         // Time and point limits both apply, including when the source is faster
         // or slower than 1 Hz. Monotonic retention ignores wall-clock changes.
-        let cutoff = source.monotonicAsOf.nanoseconds > 7_200_000_000_000
-            ? source.monotonicAsOf.nanoseconds - 7_200_000_000_000 : 0
-        series.removeAll { $0.captureSessionID == session && $0.sampledMonotonic.nanoseconds < cutoff }
         if series.count > capacity { series.removeFirst(series.count - capacity) }
         samples[source.name] = series
+        // The caller expires once at the complete source batch/publication
+        // boundary. Sweeping all interfaces for every row is quadratic.
+    }
+
+    /// All interface/session histories use the collector process's monotonic
+    /// domain. A backwards clock cannot justify subtraction across domains.
+    /// Idle/failed/stopped publication also invokes this bounded cleanup.
+    @discardableResult public mutating func expire(at now: MonotonicInstant) -> Bool {
+        guard lastExpiryTime.map({ now > $0 }) ?? true else { return false }
+        lastExpiryTime = now
+        guard now.nanoseconds > 7_200_000_000_000 else { return false }
+        let cutoff = now.nanoseconds - 7_200_000_000_000
+        var changed = false
+        for name in samples.keys {
+            guard samples[name]?.contains(where: { $0.sampledMonotonic.nanoseconds < cutoff }) == true,
+                  var series = samples.removeValue(forKey: name) else { continue }
+            let before = series.count
+            series.removeAll { $0.sampledMonotonic.nanoseconds < cutoff }
+            changed = changed || series.count != before
+            samples[name] = series
+        }
+        return changed
     }
 
     /// Source-owned IDs carry through subsequent windows and bounded trims.

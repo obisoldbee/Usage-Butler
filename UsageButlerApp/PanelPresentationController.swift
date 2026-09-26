@@ -148,7 +148,8 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
 
     @objc func togglePanel() {
         #if DEBUG
-        if CommandLine.arguments.contains("--network-v2-window"), runtime.launchMode == .offlineFixture {
+        if CommandLine.arguments.contains("--network-v2-window"),
+           runtime.launchMode == .offlineFixture || runtime.launchMode == .networkValidation {
             if validationWindow == nil {
                 let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 540, height: panelSizing.height),
                     styleMask: [.titled, .closable], backing: .buffered, defer: false)

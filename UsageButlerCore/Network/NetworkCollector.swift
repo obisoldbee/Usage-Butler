@@ -38,6 +38,7 @@ public actor NetworkCollector {
     private var aggregator: NetworkAggregator?
     private var retainedInterfaces: [String: InterfaceCounters] = [:]
     private var retainedHistory: [String: [NetworkRateSample]] = [:]
+    private var retainedHistoryExpiry: MonotonicInstant?
     private var source: (any NetworkObservationSource)?
     private var collectionState: NetworkCollectionState = .stopped
     private var capabilities: NetworkCapabilities
@@ -53,6 +54,7 @@ public actor NetworkCollector {
     private var subscriptionToken: UInt64 = 0
     private var started = false
     private var isShutdown = false
+    private var suspended = false
     private var lifecycleGeneration: UInt64 = 0
     private var publicationGeneration: UInt64 = 0
     /// Accepted preference writes outlive stop, but cannot reorder on disk.
@@ -60,6 +62,18 @@ public actor NetworkCollector {
     /// The user's most recent explicit word about collection, which outranks
     /// whatever copy `start()` happened to load.
     private var collectionIntent: Bool?
+    private var externalIntentRevision: UInt64 = 0
+    private var powerIntentRevision: UInt64 = 0
+    public func applyPowerIntent(suspended: Bool, revision: UInt64) async {
+        guard !isShutdown, revision > powerIntentRevision else { return }
+        powerIntentRevision = revision
+        if suspended { await suspend() } else { await resume() }
+    }
+    public func applyCollectionIntent(_ enabled: Bool, revision: UInt64) async {
+        guard revision >= externalIntentRevision else { return }
+        externalIntentRevision = revision
+        await setCollectionEnabled(enabled)
+    }
 
     public init(
         clock: any ClockPort,
@@ -88,7 +102,7 @@ public actor NetworkCollector {
         guard started, generation == lifecycleGeneration, !Task.isCancelled else { return }
         if case let .success(value) = loaded { settings = value }
         if let collectionIntent { settings.collectionEnabled = collectionIntent }
-        if settings.collectionEnabled, source == nil { restartSession() }
+        if settings.collectionEnabled, source == nil, !suspended { restartSession() }
         startPublishLoop()
         await publishNow(force: true)
     }
@@ -122,7 +136,7 @@ public actor NetworkCollector {
         }
         settingsSaveTask = save
         if enabled {
-            if started, source == nil { restartSession() }
+            if started, source == nil, !suspended { restartSession() }
         } else {
             tearDownSession()
         }
@@ -156,7 +170,7 @@ public actor NetworkCollector {
     /// one — before publishing.
     public func refreshNow() async {
         guard started else { return }
-        if case .disconnected = collectionState, settings.collectionEnabled {
+        if case .disconnected = collectionState, settings.collectionEnabled, !suspended {
             restartSession()
         }
         await publishNow(force: true)
@@ -175,6 +189,8 @@ public actor NetworkCollector {
         collectionState
     }
 
+    public func collectionIsEnabled() -> Bool { settings.collectionEnabled }
+
     public func currentSnapshot() async -> NetworkSnapshot {
         let reading = await clock.reading()
         return buildSnapshot(asOf: reading)
@@ -185,7 +201,7 @@ public actor NetworkCollector {
     /// next publish tick.
     public func updates() -> AsyncStream<NetworkSnapshot> {
         guard !isShutdown else { return AsyncStream { $0.finish() } }
-        let (stream, continuation) = AsyncStream<NetworkSnapshot>.makeStream()
+        let (stream, continuation) = AsyncStream<NetworkSnapshot>.makeStream(bufferingPolicy: .bufferingNewest(1))
         let superseded = self.continuation
         subscriptionToken &+= 1
         let token = subscriptionToken
@@ -203,6 +219,24 @@ public actor NetworkCollector {
 
     // MARK: - Session lifecycle
 
+    public func suspend() async {
+        guard !isShutdown, !suspended else { return }
+        suspended = true
+        // An in-flight initial settings read still belongs to this runtime.
+        // Let it restore preference while suspended; it cannot start a source
+        // until resume. Only stop/shutdown invalidate startup itself.
+        tearDownSession()
+        if settings.collectionEnabled { collectionState = .disconnected(since: Date()) }
+        await publishNow(force: true)
+    }
+
+    public func resume() async {
+        guard suspended, !isShutdown else { return }
+        suspended = false
+        if started, settings.collectionEnabled { restartSession() }
+        await publishNow(force: true)
+    }
+
     private func restartSession() {
         consumeTask?.cancel()
         sessionCounter &+= 1
@@ -211,6 +245,7 @@ public actor NetworkCollector {
         self.source = source
         if let observation = aggregator?.retainedObservation {
             retainedInterfaces = observation.interfaces; retainedHistory = observation.history
+            retainedHistoryExpiry = nil
         }
         aggregator = NetworkAggregator(sessionID: sessionID, retainedInterfaces: retainedInterfaces, retainedHistory: retainedHistory)
         collectionState = .starting
@@ -220,6 +255,7 @@ public actor NetworkCollector {
     private func tearDownSession() {
         if let observation = aggregator?.retainedObservation {
             retainedInterfaces = observation.interfaces; retainedHistory = observation.history
+            retainedHistoryExpiry = nil
         }
         consumeTask?.cancel()
         consumeTask = nil
@@ -293,17 +329,19 @@ public actor NetworkCollector {
     /// Emits only when the observable key changed (or forced), so a quiet
     /// source does not redraw the panel on every tick.
     private func publishSnapshot(asOf reading: ClockReading, force: Bool) {
+        let expired = expireHistory(at: reading.monotonicTime)
         let key = PublishKey(
             appliedSequence: aggregator?.appliedSequence ?? 0,
             collectionState: collectionState,
             capabilities: capabilities
         )
-        guard force || key != lastPublishedKey else { return }
+        guard force || expired || key != lastPublishedKey else { return }
         lastPublishedKey = key
         continuation?.yield(buildSnapshot(asOf: reading))
     }
 
     private func buildSnapshot(asOf reading: ClockReading) -> NetworkSnapshot {
+        _ = expireHistory(at: reading.monotonicTime)
         if var aggregator {
             let raw = aggregator.snapshot(
                 asOf: reading.wallTime,
@@ -326,6 +364,28 @@ public actor NetworkCollector {
             interfaceRates: [:],
             rateHistory: retainedHistory
         )
+    }
+
+    @discardableResult private func expireHistory(at time: MonotonicInstant) -> Bool {
+        if var current = aggregator {
+            let expired = current.expireHistory(at: time)
+            aggregator = current
+            return expired
+        }
+        guard retainedHistoryExpiry.map({ time > $0 }) ?? true else { return false }
+        // Same-process uptime. Do not subtract across a rollback/unknown domain.
+        guard retainedHistory.values.allSatisfy({ $0.allSatisfy { $0.sampledMonotonic <= time } }) else { return false }
+        retainedHistoryExpiry = time
+        guard time.nanoseconds > 7_200_000_000_000 else { return false }
+        let cutoff = time.nanoseconds - 7_200_000_000_000
+        var changed = false
+        for key in retainedHistory.keys {
+            guard retainedHistory[key]?.contains(where: { $0.sampledMonotonic.nanoseconds < cutoff }) == true,
+                  var series = retainedHistory.removeValue(forKey: key) else { continue }
+            series.removeAll { $0.sampledMonotonic.nanoseconds < cutoff }
+            retainedHistory[key] = series; changed = true
+        }
+        return changed
     }
 
     private func continuationTerminated(_ terminatedToken: UInt64) {

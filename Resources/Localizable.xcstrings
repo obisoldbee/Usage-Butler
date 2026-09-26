@@ -364,6 +364,16 @@
         }
       }
     },
+    "nettop 进程 socket 计数 · PTY 分帧约 1 秒延迟 · 目标采样 1 Hz": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "nettop 进程 socket 计数 · PTY 分帧约 1 秒延迟 · 目标采样 1 Hz"
+          }
+        }
+      }
+    },
     "“本段累计”从各方向最近一次有效起点计算；计数重置、缺失或接口变化后会重新开始。": {
       "extractionState": "manual",
       "localizations": {
@@ -408,6 +418,16 @@
         }
       }
     },
+    "上传": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上传"
+          }
+        }
+      }
+    },
     "上传、下载独立缩放，两张图同样高不代表速率相同。长时间范围会保留峰谷简化绘图，原始样本仍保留。": {
       "extractionState": "manual",
       "localizations": {
@@ -437,6 +457,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "上次成功：%@"
+          }
+        }
+      }
+    },
+    "上限：2,048 进程 / 256 应用 / 65,536 历史点；单应用最多 2 小时。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上限：2,048 进程 / 256 应用 / 65,536 历史点；单应用最多 2 小时。"
+          }
+        }
+      }
+    },
+    "下载": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载"
           }
         }
       }
@@ -496,6 +536,16 @@
         }
       }
     },
+    "仅看关注": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅看关注"
+          }
+        }
+      }
+    },
     "仅读取额度状态": {
       "extractionState": "manual",
       "localizations": {
@@ -507,6 +557,16 @@
         }
       }
     },
+    "保存到文件…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存到文件…"
+          }
+        }
+      }
+    },
     "关于": {
       "extractionState": "manual",
       "localizations": {
@@ -514,6 +574,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "关于"
+          }
+        }
+      }
+    },
+    "关注": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关注"
+          }
+        }
+      }
+    },
+    "关注仅在本次运行保留；不发送提醒。累计与趋势从实际观测起点开始。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关注仅在本次运行保留；不发送提醒。累计与趋势从实际观测起点开始。"
           }
         }
       }
@@ -606,6 +686,16 @@
         }
       }
     },
+    "历史受资源预算限制，部分早期样本或应用未保留。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "历史受资源预算限制，部分早期样本或应用未保留。"
+          }
+        }
+      }
+    },
     "历史最多保留本进程最近 2 小时；退出后不恢复。启动前和未采集时段留空，属于正常情况。": {
       "extractionState": "manual",
       "localizations": {
@@ -624,6 +714,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "取消"
+          }
+        }
+      }
+    },
+    "取消关注": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "取消关注"
           }
         }
       }
@@ -650,6 +750,16 @@
         }
       }
     },
+    "可执行文件与应用 Bundle 路径匹配": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可执行文件与应用 Bundle 路径匹配"
+          }
+        }
+      }
+    },
     "可用 %lld 次": {
       "extractionState": "manual",
       "localizations": {
@@ -672,6 +782,16 @@
         }
       }
     },
+    "名称": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名称"
+          }
+        }
+      }
+    },
     "启动官方登录流程并重新验证额度": {
       "extractionState": "manual",
       "localizations": {
@@ -679,6 +799,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "启动官方登录流程并重新验证额度"
+          }
+        }
+      }
+    },
+    "启动身份未知": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启动身份未知"
           }
         }
       }
@@ -712,6 +842,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "响应格式不兼容"
+          }
+        }
+      }
+    },
+    "固定当前快照并使用应用别名；不含名称、路径、PID 或目标。别名化不等于匿名。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "固定当前快照并使用应用别名；不含名称、路径、PID 或目标。别名化不等于匿名。"
           }
         }
       }
@@ -756,6 +896,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "完成"
+          }
+        }
+      }
+    },
+    "导出失败": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出失败"
+          }
+        }
+      }
+    },
+    "导出超过大小上限或无法编码，请缩小时间范围后重试。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出超过大小上限或无法编码，请缩小时间范围后重试。"
+          }
+        }
+      }
+    },
+    "导出预览": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出预览"
           }
         }
       }
@@ -837,6 +1007,16 @@
         }
       }
     },
+    "已停止": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已停止"
+          }
+        }
+      }
+    },
     "已取消 %@ 登录": {
       "extractionState": "manual",
       "localizations": {
@@ -866,6 +1046,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "已恢复"
+          }
+        }
+      }
+    },
+    "已核对系统启动身份": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已核对系统启动身份"
           }
         }
       }
@@ -903,6 +1093,16 @@
         }
       }
     },
+    "已触发资源裁剪，保留历史可能不足所选范围。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已触发资源裁剪，保留历史可能不足所选范围。"
+          }
+        }
+      }
+    },
     "已连接": {
       "extractionState": "manual",
       "localizations": {
@@ -914,6 +1114,86 @@
         }
       }
     },
+    "应用 / 进程": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用 / 进程"
+          }
+        }
+      }
+    },
+    "应用 Bundle 内的辅助进程；按实际安装路径归属": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用 Bundle 内的辅助进程；按实际安装路径归属"
+          }
+        }
+      }
+    },
+    "应用列表": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用列表"
+          }
+        }
+      }
+    },
+    "应用来源为系统 nettop。连接目标、协议、连接数及连接阻断尚未提供。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用来源为系统 nettop。连接目标、协议、连接数及连接阻断尚未提供。"
+          }
+        }
+      }
+    },
+    "应用来源暂不可用 · 接口统计独立运行": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用来源暂不可用 · 接口统计独立运行"
+          }
+        }
+      }
+    },
+    "应用活动": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用活动"
+          }
+        }
+      }
+    },
+    "应用采样不完整 · 当前速率未知": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用采样不完整 · 当前速率未知"
+          }
+        }
+      }
+    },
+    "应用采集已停止 · 可在设置 → 网络中开启": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用采集已停止 · 可在设置 → 网络中开启"
+          }
+        }
+      }
+    },
     "开发预览数据 · 尚未读取本机 CLI": {
       "extractionState": "manual",
       "localizations": {
@@ -921,6 +1201,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "开发预览数据 · 尚未读取本机 CLI"
+          }
+        }
+      }
+    },
+    "当前上传": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前上传"
+          }
+        }
+      }
+    },
+    "当前下载": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前下载"
           }
         }
       }
@@ -991,6 +1291,26 @@
         }
       }
     },
+    "当前存在状态未知": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前存在状态未知"
+          }
+        }
+      }
+    },
+    "当前没有可显示的应用观察。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前没有可显示的应用观察。"
+          }
+        }
+      }
+    },
     "当前没有可用的接口采样。": {
       "extractionState": "manual",
       "localizations": {
@@ -998,6 +1318,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "当前没有可用的接口采样。"
+          }
+        }
+      }
+    },
+    "当前源中未出现 · 保留历史": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前源中未出现 · 保留历史"
           }
         }
       }
@@ -1178,6 +1508,16 @@
         }
       }
     },
+    "手动选择仅用于排查 VPN 隧道、网桥或本机回环流量。只改变接口趋势，不影响应用统计，也不会切换网络连接。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "手动选择仅用于排查 VPN 隧道、网桥或本机回环流量。只改变接口趋势，不影响应用统计，也不会切换网络连接。"
+          }
+        }
+      }
+    },
     "手动选择仅用于排查 VPN 隧道、网桥或本机回环流量。只改变显示的统计对象，不会切换网络连接。": {
       "extractionState": "manual",
       "localizations": {
@@ -1222,6 +1562,46 @@
         }
       }
     },
+    "排序": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "排序"
+          }
+        }
+      }
+    },
+    "接口与应用是不同统计口径，不能相加。应用统计包含来源计入的回环和代理腿，不是外网账单；无法看到所有短命进程。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接口与应用是不同统计口径，不能相加。应用统计包含来源计入的回环和代理腿，不是外网账单；无法看到所有短命进程。"
+          }
+        }
+      }
+    },
+    "接口趋势统计所选网络；应用活动独立统计系统可见进程。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接口趋势统计所选网络；应用活动独立统计系统可见进程。"
+          }
+        }
+      }
+    },
+    "搜索应用或进程": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜索应用或进程"
+          }
+        }
+      }
+    },
     "操作已取消": {
       "extractionState": "manual",
       "localizations": {
@@ -1251,6 +1631,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "无法保存 %@ CLI 位置"
+          }
+        }
+      }
+    },
+    "无法保存所选文件，请选择可写的位置。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法保存所选文件，请选择可写的位置。"
           }
         }
       }
@@ -1350,6 +1740,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "显示面板"
+          }
+        }
+      }
+    },
+    "暂不可用（接口来源独立）": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂不可用（接口来源独立）"
           }
         }
       }
@@ -1486,6 +1886,16 @@
         }
       }
     },
+    "未观察 · 保留历史": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未观察 · 保留历史"
+          }
+        }
+      }
+    },
     "未设置": {
       "extractionState": "manual",
       "localizations": {
@@ -1541,6 +1951,16 @@
         }
       }
     },
+    "本地 JSON 导出预览": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本地 JSON 导出预览"
+          }
+        }
+      }
+    },
     "本地缓存不可用": {
       "extractionState": "manual",
       "localizations": {
@@ -1585,6 +2005,16 @@
         }
       }
     },
+    "来源：系统 nettop 进程计数。连接数、协议、目标与防护未采集；签名未验证。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来源：系统 nettop 进程计数。连接数、协议、目标与防护未采集；签名未验证。"
+          }
+        }
+      }
+    },
     "查看登录指引": {
       "extractionState": "manual",
       "localizations": {
@@ -1603,6 +2033,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "查看脱敏诊断…"
+          }
+        }
+      }
+    },
+    "正在建立基线": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在建立基线"
+          }
+        }
+      }
+    },
+    "正在建立应用采样基线…": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在建立应用采样基线…"
           }
         }
       }
@@ -1684,6 +2134,16 @@
         }
       }
     },
+    "正在采集系统可见进程": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在采集系统可见进程"
+          }
+        }
+      }
+    },
     "正在重新登录 %@": {
       "extractionState": "manual",
       "localizations": {
@@ -1713,6 +2173,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "正常"
+          }
+        }
+      }
+    },
+    "此观察已结束，或历史未被保留。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此观察已结束，或历史未被保留。"
+          }
+        }
+      }
+    },
+    "没有匹配的应用或进程。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有匹配的应用或进程。"
           }
         }
       }
@@ -1783,6 +2263,16 @@
         }
       }
     },
+    "独立可执行文件；没有已核验的应用 Bundle 归属": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "独立可执行文件；没有已核验的应用 Bundle 归属"
+          }
+        }
+      }
+    },
     "现在": {
       "extractionState": "manual",
       "localizations": {
@@ -1838,6 +2328,26 @@
         }
       }
     },
+    "系统可见进程的收发字节 · 含回环与代理进程": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统可见进程的收发字节 · 含回环与代理进程"
+          }
+        }
+      }
+    },
+    "系统启动身份未确认；保持独立的未知进程": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统启动身份未确认；保持独立的未知进程"
+          }
+        }
+      }
+    },
     "累计超出可表示范围后重新起算": {
       "extractionState": "manual",
       "localizations": {
@@ -1867,6 +2377,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "统计对象"
+          }
+        }
+      }
+    },
+    "统计接口及系统可见应用进程；关闭面板不停止采集": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "统计接口及系统可见应用进程；关闭面板不停止采集"
+          }
+        }
+      }
+    },
+    "统计说明": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "统计说明"
           }
         }
       }
@@ -2168,6 +2698,16 @@
         }
       }
     },
+    "趋势最多保留本次运行的最近 2 小时；应用共用 65,536 点预算，可能更短。退出后不恢复。启动前和未采集时段留空，属于正常情况。": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "趋势最多保留本次运行的最近 2 小时；应用共用 65,536 点预算，可能更短。退出后不恢复。启动前和未采集时段留空，属于正常情况。"
+          }
+        }
+      }
+    },
     "跟随默认": {
       "extractionState": "manual",
       "localizations": {
@@ -2175,6 +2715,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "跟随默认"
+          }
+        }
+      }
+    },
+    "身份未确认 · 不跨样本结算": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "身份未确认 · 不跨样本结算"
           }
         }
       }
@@ -2190,6 +2740,16 @@
         }
       }
     },
+    "返回应用列表": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返回应用列表"
+          }
+        }
+      }
+    },
     "这里统计的是网络接口，不是应用。物理网络、VPN 隧道和本机回环可能包含同一份流量，不能相加。": {
       "extractionState": "manual",
       "localizations": {
@@ -2197,6 +2757,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "这里统计的是网络接口，不是应用。物理网络、VPN 隧道和本机回环可能包含同一份流量，不能相加。"
+          }
+        }
+      }
+    },
+    "进程与归属": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "进程与归属"
           }
         }
       }
@@ -2322,6 +2892,16 @@
         }
       }
     },
+    "部分读数不可用": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分读数不可用"
+          }
+        }
+      }
+    },
     "部分项目显示 %@ 的结果": {
       "extractionState": "manual",
       "localizations": {
@@ -2373,6 +2953,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "采集状态"
+          }
+        }
+      }
+    },
+    "采集网络用量": {
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "采集网络用量"
           }
         }
       }

@@ -41,6 +41,7 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         NetworkCurveValidation.startIfRequested(runtime: runtime, panel: controller)
+        ProcessNetworkValidationRecorder.start(runtime: runtime, panel: controller)
         #endif
     }
 

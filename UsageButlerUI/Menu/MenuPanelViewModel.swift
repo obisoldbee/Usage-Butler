@@ -260,6 +260,8 @@ public final class MenuPanelViewModel: ObservableObject {
     @Published public private(set) var networkRateHistory = NetworkRateHistoryBuffer()
     public private(set) var networkHistoryRevision: UInt64 = 0
     private var networkChartCache = NetworkChartProjectionCache()
+    public let processNetwork = ProcessNetworkViewModel()
+    public func applyProcessNetworkSnapshot(_ value: ProcessNetworkSnapshot) { processNetwork.apply(value) }
     /// Sticky user interface choice. A vanished interface stays selected and
     /// renders unavailable; the caliber never switches silently (NET-02).
     @Published public var userSelectedNetworkInterface: String?
@@ -367,11 +369,13 @@ public final class MenuPanelViewModel: ObservableObject {
         #endif
     }
 
-    #if USAGE_BUTLER_FIXTURES
     public var isFixtureMode: Bool {
+        #if USAGE_BUTLER_FIXTURES
         snapshot.providers.contains { $0.origin.isFixture } || snapshot.memory.origin.isFixture
+        #else
+        false
+        #endif
     }
-    #endif
 
     public func configureRuntimeActions(
         onPanelPresented: @escaping () -> Void,

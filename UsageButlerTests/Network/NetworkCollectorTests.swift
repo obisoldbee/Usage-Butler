@@ -272,6 +272,51 @@ final class NetworkCollectorTests: XCTestCase {
         XCTFail("timed out waiting for disconnected state", file: file, line: line)
     }
 
+    func testPowerBoundaryKeepsPreferenceAndStartsOneFreshSession() async {
+        let clock = TestClock(wallTime: baseWall, monotonicNanoseconds: 0)
+        let store = FakeSettingsStore(loadResult: .success(NetworkSettings(collectionEnabled: true)))
+        let factory = SourceFactoryBox()
+        let collector = makeCollector(clock: clock, store: store, factory: factory)
+        await collector.start()
+        let first = factory.sources[0]
+        await first.waitUntilEventsStarted()
+        await collector.resume()
+        XCTAssertEqual(factory.count, 1)
+        await collector.suspend()
+        let enabled = await collector.collectionIsEnabled()
+        XCTAssertTrue(enabled)
+        let saved = await store.saved
+        XCTAssertTrue(saved.isEmpty, "power notifications do not persist a changed preference")
+        await collector.resume()
+        XCTAssertEqual(factory.count, 2)
+        XCTAssertNotEqual(first.sessionID, factory.sources[1].sessionID)
+        await collector.resume()
+        XCTAssertEqual(factory.count, 2)
+        await collector.suspend()
+        await collector.setCollectionEnabled(false)
+        await collector.resume()
+        XCTAssertEqual(factory.count, 2)
+        await collector.shutdown()
+    }
+
+    func testSnapshotsForSlowConsumerReplaceOldStates() async {
+        let clock = TestClock(wallTime: baseWall, monotonicNanoseconds: 0)
+        let store = FakeSettingsStore()
+        let factory = SourceFactoryBox()
+        let collector = makeCollector(clock: clock, store: store, factory: factory)
+        await collector.start()
+        let stream = await collector.updates()
+        for _ in 0..<10 {
+            await collector.setCollectionEnabled(true)
+            await collector.setCollectionEnabled(false)
+        }
+        await collector.refreshNow()
+        var iterator = stream.makeAsyncIterator()
+        let value = await iterator.next()
+        XCTAssertEqual(value?.collectionState, .stopped, "latest replacement, not a queued obsolete starting state")
+        await collector.shutdown()
+    }
+
     // MARK: - Tests
 
     func testStartPublishesStoppedSnapshotWhenCollectionDisabled() async {
@@ -548,6 +593,38 @@ final class NetworkCollectorTests: XCTestCase {
             persisted = settings; writes.append(settings.collectionEnabled)
             return .success(())
         }
+    }
+
+    func testSleepDuringStartupRetainsLoadedPreferenceUntilWake() async {
+        let gate = Gate(), factory = SourceFactoryBox()
+        let store = PausedStore(enabled: true, load: gate)
+        let collector = makeCollector(clock: TestClock(), store: store, factory: factory)
+        let startup = Task { await collector.start() }
+        await gate.wait()
+        await collector.suspend()
+        await gate.open(); await startup.value
+        let enabled = await collector.collectionIsEnabled()
+        XCTAssertTrue(enabled)
+        XCTAssertEqual(factory.count, 0)
+        await collector.resume(); await collector.resume()
+        XCTAssertEqual(factory.count, 1)
+        let writes = await store.writes
+        XCTAssertTrue(writes.isEmpty, "power events must not rewrite the user's preference")
+        await collector.shutdown()
+    }
+    func testPowerIntentBeforeStartAndLateSleepCannotOverrideWake() async {
+        let factory = SourceFactoryBox()
+        let collector = makeCollector(clock: TestClock(), store: PausedStore(enabled: true), factory: factory)
+        await collector.applyPowerIntent(suspended: true, revision: 1)
+        await collector.start()
+        XCTAssertEqual(factory.count, 0)
+        await collector.applyPowerIntent(suspended: false, revision: 2)
+        await collector.applyPowerIntent(suspended: true, revision: 1)
+        await collector.applyPowerIntent(suspended: false, revision: 2)
+        XCTAssertEqual(factory.count, 1)
+        let state = await collector.collectionStateNow()
+        XCTAssertNotEqual(state, .stopped)
+        await collector.shutdown()
     }
 
     func testPausedStartupLoadCannotResurrectAfterStop() async {

@@ -23,6 +23,14 @@ final class AppRuntime: ObservableObject {
     private let defaults: UserDefaults
     private let activityMonitorLauncher: any ActivityMonitorLaunching
     private let composition: ProductionRuntimeComposition?
+    private let processNetworkCollector: ProcessNetworkCollector?
+    private var validationNetworkCollector: NetworkCollector?
+    private var networkIntent: Bool?
+    private var networkIntentGeneration: UInt64 = 0
+    private var networkPowerSuspended: Bool?
+    private var networkPowerGeneration: UInt64 = 0
+    private var networkPowerTask: Task<Void, Never>?
+    private var interfaceCollector: NetworkCollector? { composition?.networkCollector ?? validationNetworkCollector }
     private var observationTasks: [Task<Void, Never>] = []
     private var startTask: Task<Void, Never>?
     private var shutdownTask: Task<Void, Never>?
@@ -73,6 +81,16 @@ final class AppRuntime: ObservableObject {
             menuModel = MenuPanelViewModel(
                 snapshot: Stage3FixtureCatalog.projection()
             )
+        case .networkValidation:
+            composition = nil
+            menuModel = MenuPanelViewModel(snapshot: Stage3AppProjection(providers: [],
+                memory: Stage3MemoryProjection(pressure: .unknown, fields: [], history: [],
+                    capturedAt: Date(), origin: .runtime)), settingsProviders: [])
+            let clock = SystemClockPort()
+            validationNetworkCollector = NetworkCollector(clock: clock,
+                settingsStore: NetworkValidationSettingsStore(), coverageProfile: .interfaceCountersOnly,
+                idleCapabilities: GetifaddrsNetworkSource.interfaceOnlyCapabilities,
+                makeSource: { GetifaddrsNetworkSource(clock: clock, reader: GetifaddrsInterfaceCountersReader(), sessionID: $0) })
         #endif
 
         case .production:
@@ -122,6 +140,12 @@ final class AppRuntime: ObservableObject {
             )
         }
 
+        #if USAGE_BUTLER_FIXTURES
+        let useProcessSource = launchMode != .offlineFixture
+        #else
+        let useProcessSource = true
+        #endif
+        processNetworkCollector = useProcessSource ? ProcessNetworkCollector(makeSource: { NettopProcessSource(sessionID: $0) }) : nil
         configureMenuActions()
         menuModel.updateGlobalShortcutText(
             defaults.string(forKey: ProviderPreferenceKey.globalShortcut)
@@ -133,6 +157,12 @@ final class AppRuntime: ObservableObject {
                 await self?.startProductionRuntime()
             }
         }
+        #if DEBUG
+        if launchMode == .networkValidation {
+            menuModel.selectedPage = .network
+            startTask = Task { @MainActor [weak self] in await self?.startValidationNetwork() }
+        }
+        #endif
     }
 
     func openActivityMonitor() {
@@ -303,6 +333,7 @@ final class AppRuntime: ObservableObject {
                 self?.menuModel.invalidateNetworkSystemPath()
                 self?.menuModel.refreshNetworkSystemPath(using: networkPathReader)
                 self?.requestLifecycleRefresh(reason: .systemWake)
+                self?.updateNetworkPower(suspended: false)
             }
         }
         observationTasks.append(wakeTask)
@@ -311,6 +342,7 @@ final class AppRuntime: ObservableObject {
             for await _ in sleepNotifications {
                 guard !Task.isCancelled else { return }
                 self?.menuModel.invalidateNetworkSystemPath()
+                self?.updateNetworkPower(suspended: true)
             }
         })
 
@@ -319,6 +351,7 @@ final class AppRuntime: ObservableObject {
 
         await memoryController.start()
         await networkCollector.start()
+        await startProcessObservation()
         refreshNetworkPublishPolicy()
         let controllers = Array(composition.controllers.values)
         await withTaskGroup(of: Void.self) { group in
@@ -361,6 +394,11 @@ final class AppRuntime: ObservableObject {
     }
 
     private func manualRefresh() async {
+        if menuModel.selectedPage == .network, let interfaces = interfaceCollector, !isShuttingDown {
+            await interfaces.refreshNow()
+            await processNetworkCollector?.refresh()
+            return
+        }
         guard let composition else {
             #if USAGE_BUTLER_FIXTURES
             if launchMode == .offlineFixture {
@@ -373,6 +411,7 @@ final class AppRuntime: ObservableObject {
 
         if menuModel.selectedPage == .network {
             await composition.networkCollector.refreshNow()
+            await processNetworkCollector?.refresh()
             return
         }
 
@@ -728,7 +767,7 @@ final class AppRuntime: ObservableObject {
     /// network page; anything else drops to the background cadence. Source
     /// sampling itself never depends on panel visibility.
     private func refreshNetworkPublishPolicy() {
-        guard let collector = composition?.networkCollector,
+        guard let collector = interfaceCollector,
               !isShuttingDown else {
             return
         }
@@ -737,6 +776,7 @@ final class AppRuntime: ObservableObject {
             await collector.updatePolicy(
                 isNetworkPageActive ? .panelVisible : .background
             )
+            await processNetworkCollector?.updatePolicy(isNetworkPageActive ? .panelVisible : .background)
         }
     }
 
@@ -746,6 +786,7 @@ final class AppRuntime: ObservableObject {
     /// would begin a session from the settings it loaded earlier.
     #if DEBUG
     func debugQuiesceNetworkCollection() async -> String {
+        await processNetworkCollector?.setEnabled(false)
         guard let collector = composition?.networkCollector else { return "no-collector" }
         await collector.setCollectionEnabled(false)
         await collector.stop()
@@ -759,11 +800,17 @@ final class AppRuntime: ObservableObject {
     #endif
 
     private func setNetworkCollectionEnabled(_ enabled: Bool) async {
-        guard let collector = composition?.networkCollector,
+        guard let collector = interfaceCollector,
               !isShuttingDown else {
             return
         }
-        await collector.setCollectionEnabled(enabled)
+        networkIntent = enabled; networkIntentGeneration &+= 1
+        let g = networkIntentGeneration
+        // Both actors accept the latest intent before any persistence drain.
+        async let interfaceChange: Void = collector.applyCollectionIntent(enabled, revision: g)
+        await processNetworkCollector?.applyCollectionIntent(enabled, revision: g)
+        await interfaceChange
+        guard g == networkIntentGeneration else { return }
     }
 
     /// Persists the global panel shortcut and re-registers the hotkey.
@@ -879,12 +926,17 @@ final class AppRuntime: ObservableObject {
     private func shutdownRuntime() async {
         guard !shutdownComplete, !isShuttingDown else { return }
         isShuttingDown = true
+        networkPowerTask?.cancel()
         startTask?.cancel()
         refreshPolicyUpdateTask?.cancel()
         lifecycleRefreshTask?.cancel()
         freshnessTickTask?.cancel()
+        await processNetworkCollector?.shutdown()
+        await validationNetworkCollector?.shutdown()
 
         guard let composition else {
+            for task in observationTasks { task.cancel() }
+            observationTasks.removeAll()
             shutdownComplete = true
             return
         }
@@ -922,6 +974,51 @@ final class AppRuntime: ObservableObject {
         await composition.larkProcessClient?.shutdown()
         shutdownComplete = true
     }
+
+    private func updateNetworkPower(suspended: Bool) {
+        guard !isShuttingDown, networkPowerSuspended != suspended else { return }
+        networkPowerSuspended = suspended; networkPowerGeneration &+= 1
+        let revision = networkPowerGeneration
+        let processes = processNetworkCollector, interfaces = interfaceCollector
+        networkPowerTask?.cancel()
+        // Assign one intent before either asynchronous drain. Each actor also
+        // rejects late revisions, so an old sleep cannot arrive after wake.
+        networkPowerTask = Task {
+            async let processChange: Void? = processes?.applyPowerIntent(suspended: suspended, revision: revision)
+            async let interfaceChange: Void? = interfaces?.applyPowerIntent(suspended: suspended, revision: revision)
+            _ = await (processChange, interfaceChange)
+        }
+    }
+
+    private func startProcessObservation() async {
+        guard let collector = processNetworkCollector, let interfaces = interfaceCollector, !isShuttingDown else { return }
+        observationTasks.append(Task { @MainActor [weak self] in
+            for await snapshot in await collector.updates() {
+                guard !Task.isCancelled else { return }
+                self?.menuModel.applyProcessNetworkSnapshot(snapshot)
+            }
+        })
+        let enabled = await interfaces.collectionIsEnabled()
+        guard !isShuttingDown, !Task.isCancelled else { return }
+        await collector.applyCollectionIntent(networkIntent ?? enabled, revision: networkIntentGeneration)
+    }
+
+    #if DEBUG
+    private func startValidationNetwork() async {
+        guard let interfaces = validationNetworkCollector else { return }
+        let path = SystemConfigurationNetworkPathReader()
+        observationTasks.append(Task { @MainActor [weak self] in
+            for await snapshot in await interfaces.updates() {
+                guard !Task.isCancelled else { return }
+                self?.menuModel.refreshNetworkSystemPath(using: path)
+                self?.menuModel.applyNetworkSnapshot(snapshot)
+            }
+        })
+        await interfaces.start()
+        await startProcessObservation()
+        refreshNetworkPublishPolicy()
+    }
+    #endif
 
     private static func registerPreferenceDefaults(in defaults: UserDefaults) {
         defaults.register(defaults: [

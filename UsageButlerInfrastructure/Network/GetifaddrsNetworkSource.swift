@@ -4,15 +4,13 @@ import UsageButlerCore
 import UsageButlerDomain
 
 /// Live observation source built on public interface MIB counters only.
-/// Honest capability profile: interface byte observation works without
-/// special entitlements, but per-app attribution and every enforcement
-/// action need the signed system extension this build does not ship (G-N0),
-/// and persistent history/export are not implemented yet — so those capabilities report
-/// their real blockers instead of pretending.
+/// This source covers interface bytes only. The independent nettop process
+/// source owns application observation; neither source implements connection
+/// enforcement. These capabilities describe this source, not the whole app.
 public struct GetifaddrsNetworkSource: NetworkObservationSource {
     public static let defaultPollInterval: Duration = .seconds(1)
 
-    /// What this build can honestly claim.
+    /// Capabilities of this interface-only source.
     public static let interfaceOnlyCapabilities = NetworkCapabilities(
         observe: true,
         blockNewConnections: false,
@@ -56,7 +54,7 @@ public struct GetifaddrsNetworkSource: NetworkObservationSource {
         let sessionID = self.sessionID
         let intervalNanos = Self.nanoseconds(for: pollInterval)
         let epoch = self.epoch
-        return AsyncStream { continuation in
+        return AsyncStream(bufferingPolicy: .bufferingNewest(8)) { continuation in
             let task = Task {
                 var sequence: UInt64 = 0
                 func emit(_ payload: NetworkSourcePayload, at reading: ClockReading) {

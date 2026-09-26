@@ -109,8 +109,11 @@ public struct NetworkChartSamplingContract: Equatable, Sendable {
     public func threshold(between earlier: NetworkRateSample, and later: NetworkRateSample) -> TimeInterval {
         // Missing cadence is not reconstructed from point spacing. Legacy
         // samples use the explicitly supplied conservative nominal contract.
-        let cadence = max(earlier.samplingInterval ?? nominalSampleInterval,
-                          later.samplingInterval ?? nominalSampleInterval)
+        threshold(earlierCadence: earlier.samplingInterval, laterCadence: later.samplingInterval)
+    }
+
+    public func threshold(earlierCadence: TimeInterval?, laterCadence: TimeInterval?) -> TimeInterval {
+        let cadence = max(earlierCadence ?? nominalSampleInterval, laterCadence ?? nominalSampleInterval)
         return max(minimumThreshold, cadence * gapMultiplier)
     }
 

@@ -59,3 +59,9 @@ schema 仍为 v2，新增可选 interfaceInventory/systemIdentity 和各方向 c
 NetworkRateSample.sampleID 由 source/interface/session/epoch/monotonic 组成。采集侧为各向连续段保存锚点，裁剪后仍保留；legacy 无锚点时先在完整历史分段，再裁切可见范围。真实 nil、gap、source/interface/session/epoch 和倒序仍强制断段。点 ID 与绘图段 key 分开。缓存 key 包含完整数据 revision、接口、now/window、采样合同和抽稀限额；数据 revision 同时覆盖连续性、方向和基线改变。缓存保留原始峰值、峰谷抽稀、孤立点和随时间推进的空白。
 
 原始 observedPeak 可空，视觉与 AX 共用，只有轴使用 nil→0 fallback。游标使用原始样本索引；Chart 标记不依赖游标状态，独立 overlay 负责固定线。Escape 清除读数并归还 AppKit first responder，表单/Picker Tab 仍优先。
+
+## 0.4.0 进程观察与接口复核
+
+[真实应用合同](network-panel-and-app-observation.md)新增独立 process schema/source/session/collector。旧 NetworkSnapshot v1/v2 codec 不变；旧 apps/flow fixture 不能升级为生产进程来源。新本地导出 schema 为 usagebutler.network.process-export / version 1，所有 UInt64 与单调时间使用十进制字符串，未知字段保留 null。
+
+接口累计和图表共同使用相邻 cadence 的最大值、2.5 倍和至少2秒阈值。source 保留最新8事件、完整快照保留最新1项；丢号增加 loss 并重建接口基线。休眠保留用户偏好、停止源，唤醒新会话；重复唤醒不额外创建来源。2小时保留清理覆盖全部接口、旧会话与停止后的发布，不对回退的单调时钟跨域硬减。

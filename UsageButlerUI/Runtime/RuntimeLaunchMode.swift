@@ -6,11 +6,13 @@ public enum RuntimeLaunchMode: Equatable, Sendable {
     case production
     #if USAGE_BUTLER_FIXTURES
     case offlineFixture
+    case networkValidation
     #endif
 
     public static func resolve(environment: [String: String]) -> RuntimeLaunchMode {
         #if USAGE_BUTLER_FIXTURES
-        environment[offlineFixtureEnvironmentKey] == "1"
+        if environment["USAGE_BUTLER_NETWORK_VALIDATION"] == "1" { return .networkValidation }
+        return environment[offlineFixtureEnvironmentKey] == "1"
             ? .offlineFixture
             : .production
         #else

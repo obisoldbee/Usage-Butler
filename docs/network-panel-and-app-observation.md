@@ -1,24 +1,35 @@
-# 网络主面板与按应用观察边界（0.3.5）
+# 网络接口与真实应用观察（0.4.0）
 
-2026-09-23；观察与方案分开。界面调整已实现，下面的系统扩展路线仍待开发和实机验证。
+应用活动来自普通权限的系统 `/usr/bin/nettop -P -L 0 -n -x -s 1 -J bytes_in,bytes_out`。独立的 ProcessNetworkCollector 负责进程来源，IFMIB 接口来源保持独立；旧 flow 演示合同不参与 Release 应用统计。
 
-## 本轮界面约定
+## 用户界面
 
-正常主面板直接呈现五档范围、上传和下载趋势。采集状态/开关、自动/手动统计对象、能力说明及采样诊断集中到“设置 → 网络”；只保留顶栏统一设置齿轮。主面板保留非健康采集与当前范围的历史重新起算提示，停止/过期/未知不显示为实时零。选择接口只改变观察对象，不修改网络连接；保留现有偏好。Debug显式演示继续标记来源，Release不出现模拟应用。
+网络页的应用活动提供真实应用/进程列表、名称/进程搜索、上传/下载/名称排序、本次运行关注筛选、当前速率和各向本段累计。详情复用稳定坐标的原生双趋势，红上蓝下、五档时间、独立刻度与联动游标；返回保留查询、排序、返回行与键盘焦点。未知启动身份不支持关注。主面板健康时不重复显示采集开关或接口选择；设置页集中控制并分别描述接口与应用来源状态。
 
-## Observed：现有实现
+本地 JSON 先固定快照并展示别名化预览，再打开系统保存面板。取消不写文件。导出不含应用/进程名称、PID、路径、端点或凭据；连接数、协议与目标明确为 null。列表导出当前筛选集合及段累计；详情导出所选时间内实际保留的源点。编码大小上限 8 MiB，超限提示缩小范围。别名化不是匿名承诺。
 
-`GetifaddrsInterfaceCountersReader`实际通过公开IFMIB读取接口计数；`NetworkCollector`据此结算接口速率和有界历史。真实来源没有应用归属、连接端点或规则执行；`project.yml`没有NetworkExtension/SystemExtension target，`Config/UsageButler.entitlements`为空。当前ad-hoc构建不是可部署网络扩展的签名证明。“按应用尚未接入”不能通过用户设置开启。
+## 来源与身份
 
-## Proposed：接入顺序
+这属于系统可见进程 socket 字节口径，可能计入回环、代理腿与重传，不是网卡线速或外网计费。接口与应用不得求和；不将代理的流量猜回原应用，不把进程行当成连接。短到没有进入 nettop 帧的进程没有覆盖保证。
 
-1. 建立macOS内容过滤System Extension的最小可部署验证，接收真实flow，初始全部允许。Apple将macOS内容过滤provider的部署形式列为System Extension，支持Developer ID直接分发；不用把iOS的受监督设备限制套用到Mac。[TN3134](https://developer.apple.com/documentation/technotes/tn3134-network-extension-provider-deployment)
-2. 配置宿主与扩展的签名、标识、相应entitlement/provisioning、安装/激活与系统授权反馈。Developer ID分发需要对应Network Extension profile；当前账户/证书资格未检查。不得以关闭SIP、加root权限或当前ad-hoc签名冒充正式接入。[Network Extensions Entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.networking.networkextension)
-3. 通过flow的应用/进程audit token建立稳定身份，处理helper进程、退出及身份未知；按应用聚合真实统计再接现有Domain/Core合同。[sourceAppAuditToken](https://developer.apple.com/documentation/networkextension/nefilterflow/sourceappaudittoken)
-4. 请求统计报告，用单调时间、flow身份/序号和有界队列结算上下行。API提供statistics回报频率，但仍须验证目标OS的实际字段语义、累计/增量、关闭时最后报告及重复/丢失；不能直接把每次报告相加。Apple字节属性页仅描述flowClosed，而statistics事件/频率页描述持续回报，此处列为实测门，不因文档有字段就宣称秒级流量可用。[statisticsReportFrequency](https://developer.apple.com/documentation/networkextension/nefilternewflowverdict/statisticsreportfrequency)、[bytesInboundCount](https://developer.apple.com/documentation/networkextension/nefilterreport/bytesinboundcount)
-5. 显示实际端点；只有系统提供域名时才展示域名。remoteHostname仅适用于由按名称创建连接API产生的部分flow，缺失时保持IP/未知，不将反向DNS当成实际访问域名。[remoteHostname](https://developer.apple.com/documentation/networkextension/nefiltersocketflow/remotehostname)
-6. 先交付观察，再单独实现连接防护：验证新连接与已有连接差异、规则版本/执行回执、授权撤销、失败和卸载恢复。观察功能可用不代表阻断已经生效。
+源的标准输入、输出共用自有 PTY，父进程只读并持续排空，不发送交互输入；避免空输入设备的 EOF 导致子进程持续唤醒。重复 CSV 表头定义帧边界。时间是收到表头时的单调时钟，墙钟仅用于显示；下一表头确认前一帧，约有一秒分帧延迟。它不是内核精确事件时间。过快成批到达、超时、格式漂移、EOF、超大输出均明确不完整，不据发布时刻补造采样。
 
-验收至少包含长短连接、TCP/UDP、浏览器helper、VPN/物理口去重口径、睡眠/唤醒、扩展/宿主重启、拒绝授权、计数边界，以及有界缓存/历史和持续内存观察。没有相应真机收据的能力继续保持不可用。接口计数与flow字节统计口径不同，不承诺逐字节相等。
+PID 与公开 proc_bsdinfo 的启动秒/微秒、proc_pidpath 路径共同建立实例。前后核对启动身份；可执行文件实际位于有效应用 Bundle 内时按规范化安装路径与 Bundle ID 归属辅助进程。不同安装路径独立；共享 WebKit/系统代理独立呈现。签名始终未验证，Bundle ID 不代表签名证据。身份读取和 nettop 不是内核原子快照；启动身份不可证实时，使用每帧独立未知观察，不能跨帧结算/关注。
 
-本轮没有安装系统扩展、请求新权限、读取开发者账户/私钥或执行阻断。用户提问仅用于明确工程缺口，尚未把后端方案视为已实现能力。
+## 结算与资源
+
+速率只由源帧差值/单调时间结算；快照读取不推进基线。成员变化、PID 重用、缺行恢复、缺失方向、counter 下降、丢帧、长静默与源重启重新建立对应基线。各方向累计独立，可为空；不回填启动前字节。成功帧的缺行只表示当前源中未出现，不能推断进程已经退出。
+
+每会话一个 nettop；显式关闭、退出和休眠停止自有进程及 FD。恢复创建新会话，保留有界历史但不跨会话结算。失效自动恢复最多三次，之后用户可刷新。所有跨等待恢复由 generation 和外部 intent revision 防止旧启用复活；两路来源共享 power intent revision，重复唤醒幂等，旧休眠收尾不能覆盖新唤醒。开发重建脚本若用 SIGTERM，则另行核对并收尾该构建拥有的 nettop；不是按名称批量终止。
+
+上限：单行 4 KiB、单帧 stdout 1 MiB、stderr 总量 64 KiB、16 KiB 单次读取；源队列保留最新两帧，缺号必须重建基线；快照队列保留最新一个。每帧最多 2,048 进程、256 应用，身份元数据缓存 512 项/60 秒。每应用最多 7,200 点/2 小时，全局最多 65,536 点，按当前保留应用数公平分配点数；优先淘汰最旧缺失应用。选择和关注不能突破预算。所有裁剪显式可见，停止后的定期保留清理仍有效。
+
+接口侧同时统一相邻 cadence 的 gap 判断、源八事件/快照一项的缓冲上限、丢帧基线、显式休眠边界和全接口/旧会话的单调两小时清理。单调时钟回退不能作为跨未知时域的到期证据。
+
+## 验证边界与后续
+
+独立 `usagebutler.network.process-export` v1 的根 `session` 表示当前源会话；每个历史点的 `session` 使用同一份导出内会话别名表，保留重启前历史的会话边界。`uploadContinuity` / `downloadContinuity` 仅在该点的 `session` 内有效，不能跨会话连接。`samplingIntervalSeconds` 保留已知的声明采样周期，未知为 null；实际时间差仍来自各点单调时间。应用与会话均为导出内别名，不输出原始应用 key、路径派生 hash、进程实例或原始会话 ID。
+
+确定性测试、真实 TCP/UDP 回环、原生操作、资源 stress、Universal 构建分别记录，不能互相替代。受控回环的字节一致只证明该主机与该窗口；系统对照中的重传可解释部分差异，另有旧探针差异未解释，不作常数扣减。完整 VoiceOver、macOS 13/x86 实机、所有代理拓扑、真实 sleep/wake 与 18/24 小时浸泡没有执行。
+
+NetworkExtension 的连接身份、目标与防护仍是独立能力门。没有安装系统扩展、提权、改网络、读取签名私钥或执行阻断。旧 flow 后端在正式 NE/ETW 接入前仍需独立审查，不因本次进程来源通过而取得真实执行资格。

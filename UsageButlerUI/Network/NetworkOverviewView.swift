@@ -37,17 +37,28 @@ enum NetworkPresentation {
 
 struct NetworkOverviewView: View {
     @ObservedObject var model: MenuPanelViewModel
+    @State private var applications = true
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let now = context.date
-            let name = model.resolvedNetworkInterfaceName
-            let source = name.flatMap { model.networkSnapshot?.interfaces[$0] }
-            let rate = name.flatMap { model.networkSnapshot?.interfaceRates[$0] }
-            let frame = model.networkTrendFrame(now: now, window: model.networkTrendRange.duration)
-            let stale = NetworkStatusRules.ratesAreStale(model.networkSnapshot, interface: name, now: now)
             VStack(alignment: .leading, spacing: 12) {
-                notices(now: now, name: name, samples: frame.samples)
-                NetworkTrendView(range: $model.networkTrendRange, frame: frame, source: source, rate: rate, stale: stale, interface: model.userSelectedNetworkInterface ?? name)
+                if !model.isFixtureMode {
+                    Picker("网络视图", selection: $applications) {
+                        Text("应用活动").tag(true)
+                        Text("接口趋势").tag(false)
+                    }.pickerStyle(.segmented).accessibilityIdentifier("network.view")
+                }
+                if applications && !model.isFixtureMode {
+                    ProcessNetworkApplicationsView(model: model.processNetwork, now: now)
+                } else {
+                    let name = model.resolvedNetworkInterfaceName
+                    let source = name.flatMap { model.networkSnapshot?.interfaces[$0] }
+                    let rate = name.flatMap { model.networkSnapshot?.interfaceRates[$0] }
+                    let frame = model.networkTrendFrame(now: now, window: model.networkTrendRange.duration)
+                    let stale = NetworkStatusRules.ratesAreStale(model.networkSnapshot, interface: name, now: now)
+                    notices(now: now, name: name, samples: frame.samples)
+                    NetworkTrendView(range: $model.networkTrendRange, frame: frame, total: source?.sessionTotal, rate: rate, stale: stale, interface: model.userSelectedNetworkInterface ?? name)
+                }
                 #if USAGE_BUTLER_FIXTURES
                 if model.isFixtureMode { NetworkDemoApplicationsView() }
                 #endif
@@ -87,10 +98,10 @@ struct NetworkOverviewView: View {
     }
 }
 
-private struct NetworkTrendView: View {
+struct NetworkTrendView: View {
     @Binding var range: NetworkTrendRange
     let frame: NetworkTrendFrame
-    let source: InterfaceCounters?
+    let total: SessionByteTotal?
     let rate: NetworkRate?
     let stale: Bool
     let interface: String?
@@ -100,7 +111,7 @@ private struct NetworkTrendView: View {
 
 
     var body: some View {
-        trend(now: frame.now, source: source, rate: rate, samples: frame.samples, projection: frame.projection, stale: stale)
+        trend(now: frame.now, rate: rate, samples: frame.samples, projection: frame.projection, stale: stale)
             .onChange(of: range) { _ in resetAxes() }
             .onChange(of: interface) { _ in resetAxes() }
     }
@@ -110,7 +121,7 @@ private struct NetworkTrendView: View {
         inspection.inspectedAt = nil; inspection.pinned = false
     }
 
-    private func trend(now: Date, source: InterfaceCounters?, rate: NetworkRate?, samples: [NetworkRateSample], projection: NetworkChartProjection, stale: Bool) -> some View {
+    private func trend(now: Date, rate: NetworkRate?, samples: [NetworkRateSample], projection: NetworkChartProjection, stale: Bool) -> some View {
         let uploadPeak = frame.uploadPeak
         let downloadPeak = frame.downloadPeak
         return VStack(alignment: .leading, spacing: 10) {
@@ -128,10 +139,10 @@ private struct NetworkTrendView: View {
                 }
             }.padding(3).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
             direction(.upload, now: now, points: frame.uploadPoints, current: stale ? nil : rate?.uploadBytesPerSecond,
-                      total: source?.sessionTotal?.upload, peak: uploadPeak, bound: uploadAxis.upperBound, samples: samples)
+                      total: total?.upload, peak: uploadPeak, bound: uploadAxis.upperBound, samples: samples)
             Divider()
             direction(.download, now: now, points: frame.downloadPoints, current: stale ? nil : rate?.downloadBytesPerSecond,
-                      total: source?.sessionTotal?.download, peak: downloadPeak, bound: downloadAxis.upperBound, samples: samples)
+                      total: total?.download, peak: downloadPeak, bound: downloadAxis.upperBound, samples: samples)
             Text(inspectionText(samples: samples))
                 .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                 .lineLimit(1).frame(height: 16, alignment: .leading)

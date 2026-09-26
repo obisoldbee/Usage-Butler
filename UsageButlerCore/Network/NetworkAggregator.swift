@@ -84,6 +84,7 @@ public struct NetworkAggregator: Sendable {
         var since: Date?
         var sinceMonotonic: MonotonicInstant?
         var previousAt: MonotonicInstant?
+        var previousCadence: TimeInterval?
         var breakReason: String?
         var value: DirectionByteTotal {
             .init(bytes: total, since: since, sinceMonotonic: sinceMonotonic, breakReason: breakReason)
@@ -170,6 +171,9 @@ public struct NetworkAggregator: Sendable {
     /// Highest applied sequence; lets collectors detect progress without
     /// building a snapshot (snapshotting mutates rate baselines).
     public var appliedSequence: UInt64 { lastSequence }
+    @discardableResult public mutating func expireHistory(at time: MonotonicInstant) -> Bool {
+        rateHistory.expire(at: time)
+    }
 
     /// Applies one event. Returns false when the event was dropped as foreign
     /// session, replay/duplicate or orphaned — the caller can log the drop.
@@ -192,8 +196,10 @@ public struct NetworkAggregator: Sendable {
             duplicateEventCount &+= 1
             return false
         }
-        if envelope.sequence > lastSequence &+ 1 {
-            lostEventCount &+= envelope.sequence - lastSequence - 1
+        if envelope.sequence - lastSequence > 1 {
+            let sum = lostEventCount.addingReportingOverflow(envelope.sequence - lastSequence - 1)
+            lostEventCount = sum.overflow ? UInt64.max : sum.partialValue
+            for name in interfaces.keys { rebaseline[name] = "source-events-lost" }
         }
         lastSequence = envelope.sequence
 
@@ -204,6 +210,7 @@ public struct NetworkAggregator: Sendable {
             return applyEnumeration(result, envelope: envelope)
         case let .interfaceCounters(sample):
             hasLiveSample = true
+            _ = rateHistory.expire(at: sample.monotonicAsOf)
             return applyInterface(sample)
         case let .flowStarted(identity):
             hasLiveSample = true
@@ -226,6 +233,7 @@ public struct NetworkAggregator: Sendable {
     private mutating func applyEnumeration(_ result: NetworkInterfaceEnumeration, envelope: NetworkEventEnvelope) -> Bool {
         if let previous = inventory?.envelope.monotonicOccurredAt,
            envelope.monotonicOccurredAt <= previous { return false }
+        _ = rateHistory.expire(at: envelope.monotonicOccurredAt)
         switch result {
         case .failed:
             inventory = .init(envelope: envelope, succeeded: false, names: [])
@@ -325,9 +333,11 @@ public struct NetworkAggregator: Sendable {
             }
             var reason: String?
             if let epoch = d.epoch, epoch != sample.counters.epoch { reason = "epoch-changed" }
-            if let previous = d.previousAt, let cadence = sample.samplingInterval {
+            if let previous = d.previousAt, sample.monotonicAsOf > previous {
                 let elapsed = Double(sample.monotonicAsOf.nanoseconds - previous.nanoseconds) / 1e9
-                if elapsed > cadence * 2.5 { reason = "sampling-gap" }
+                if elapsed > NetworkChartSamplingContract().threshold(earlierCadence: d.previousCadence, laterCadence: sample.samplingInterval) {
+                    reason = "sampling-gap"
+                }
             }
             if sample.counters.semantics != .intervalDelta, let baseline = d.baseline, value < baseline {
                 reason = reason ?? "counter-reset"
@@ -347,6 +357,7 @@ public struct NetworkAggregator: Sendable {
                 d.baseline = value
             }
             d.epoch = sample.counters.epoch; d.previousAt = sample.monotonicAsOf
+            d.previousCadence = sample.samplingInterval
             state[direction] = d
         }
     }
@@ -530,6 +541,7 @@ public struct NetworkAggregator: Sendable {
         monotonicAsOf: MonotonicInstant,
         collectionState: NetworkCollectionState
     ) -> NetworkSnapshot {
+        _ = rateHistory.expire(at: monotonicAsOf)
         let apps = appCounters(monotonicAsOf: monotonicAsOf)
         return NetworkSnapshot(
             sessionID: sessionID,
@@ -643,6 +655,13 @@ public struct NetworkAggregator: Sendable {
         var result: [String: NetworkRate] = [:]
         for (name, state) in interfaces {
             guard let previous = state.previous else { continue }
+            let elapsed = state.latest.monotonicAsOf > previous.monotonicAsOf
+                ? Double(state.latest.monotonicAsOf.nanoseconds - previous.monotonicAsOf.nanoseconds) / 1e9 : 0
+            if elapsed > NetworkChartSamplingContract().threshold(earlierCadence: previous.samplingInterval, laterCadence: state.latest.samplingInterval) {
+                result[name] = .init(uploadBytesPerSecond: nil, downloadBytesPerSecond: nil,
+                    asOf: state.latest.asOf, window: .seconds(elapsed))
+                continue
+            }
             if previous.counters.epoch != state.latest.counters.epoch {
                 result[name] = NetworkRate(uploadBytesPerSecond: nil, downloadBytesPerSecond: nil, asOf: state.latest.asOf, window: .seconds(1))
                 continue
