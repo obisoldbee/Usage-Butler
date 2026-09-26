@@ -109,10 +109,22 @@ public enum NetworkStatusRules {
         case "missing-counter": String(localized: "缺失计数恢复后重新起算")
         case "epoch-changed": String(localized: "计数周期变化后重新起算")
         case "counter-overflow": String(localized: "累计超出可表示范围后重新起算")
+        case "members-changed": String(localized: "已观察进程成员变化后重新起算")
+        case "incomplete-frame": String(localized: "连续完整采样不足，重新起算")
+        case "counter-unavailable-or-reset": String(localized: "计数不可用或重置后重新起算")
+        case "overflow": String(localized: "累计超出可表示范围后重新起算")
         case "legacy-unverified": String(localized: "旧记录的累计起点未验证")
         case nil: String(localized: "连续")
         case let reason?: String(localized: "因 \(reason) 重新起算")
         }
+    }
+
+    /// Application totals have their own boundaries. Explain them in the
+    /// application detail rather than linking to interface-only diagnostics.
+    public static func applicationSegmentText(_ segment: DirectionByteTotal, direction: String) -> String {
+        let start = segment.since.map { $0.formatted(date: .omitted, time: .standard) }
+            ?? String(localized: "起点待确认")
+        return "\(direction) · 自 \(start) · \(sessionTotalReasonText(segment.breakReason))"
     }
 
     /// The segment keeps its historical reason for diagnostics, but an old

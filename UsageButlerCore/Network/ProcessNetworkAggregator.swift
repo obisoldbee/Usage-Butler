@@ -17,6 +17,7 @@ public struct ProcessNetworkBudget: Equatable, Sendable {
 /// Settlement is performed exactly once at a source frame boundary. Reading
 /// or publishing a snapshot has no accounting side effects.
 public struct ProcessNetworkAggregator: Sendable {
+    private enum Delta { case value(UInt64), discontinuity(String) }
     private struct Direction: Sendable {
         var total: UInt64?
         var since: Date?
@@ -58,6 +59,7 @@ public struct ProcessNetworkAggregator: Sendable {
     private var states: [String: State] = [:]
     private var envelope: NetworkEventEnvelope?
     private var previousComplete = false
+    private var previousCadence: TimeInterval?
     private var sourceState: ProcessNetworkState = .starting
     private var issue: String?
     private var truncated = false
@@ -119,7 +121,8 @@ public struct ProcessNetworkAggregator: Sendable {
         }
         let dt = envelope.map { Double(e.monotonicOccurredAt.nanoseconds - $0.monotonicOccurredAt.nanoseconds) / 1e9 }
         let validCadence = frame.samplingInterval.isFinite && frame.samplingInterval > 0
-        let timely = dt.map { validCadence && $0 > 0 && $0 <= max(2, frame.samplingInterval * 2.5) } ?? false
+        let timely = dt.map { validCadence && $0 > 0 && $0 <= NetworkChartSamplingContract().threshold(
+            earlierCadence: previousCadence, laterCadence: frame.samplingInterval) } ?? false
         sequence = e.sequence
         var seenPIDs = Set<Int32>()
         let duplicate = frame.processes.contains { !seenPIDs.insert($0.identity.pid).inserted }
@@ -172,25 +175,34 @@ public struct ProcessNetworkAggregator: Sendable {
             let stableMembers = identitiesKnown && previousGroups[key] == ids
             let canSettle = complete && previousComplete && !gap && timely && stableMembers
             let reason = !complete || !previousComplete ? "incomplete-frame" : gap || !timely ? "sampling-gap" : "members-changed"
-            func delta(upload: Bool) -> UInt64? {
-                guard canSettle else { return nil }
+            func delta(upload: Bool) -> Delta {
+                guard canSettle else { return .discontinuity(reason) }
                 var total: UInt64 = 0
                 for row in members {
                     guard let id = row.identity.instanceID, let old = previous[id],
                           let a = upload ? row.bytes.upload : row.bytes.download,
-                          let b = upload ? old.bytes.upload : old.bytes.download, a >= b else { return nil }
+                          let b = upload ? old.bytes.upload : old.bytes.download, a >= b else {
+                        return .discontinuity("counter-unavailable-or-reset")
+                    }
                     let sum = total.addingReportingOverflow(a - b)
-                    guard !sum.overflow else { return nil }
+                    guard !sum.overflow else { return .discontinuity("overflow") }
                     total = sum.partialValue
                 }
-                return total
+                return .value(total)
             }
-            let up = delta(upload: true), down = delta(upload: false)
-            var upRate: Double?, downRate: Double?
-            if let up, let dt, s.up.settle(up, frame: frame) { upRate = Double(up) / dt }
-            else { s.up.reset(frame, reason: canSettle ? "counter-unavailable-or-reset" : reason) }
-            if let down, let dt, s.down.settle(down, frame: frame) { downRate = Double(down) / dt }
-            else { s.down.reset(frame, reason: canSettle ? "counter-unavailable-or-reset" : reason) }
+            func settle(_ delta: Delta, direction: inout Direction) -> Double? {
+                switch delta {
+                case let .value(bytes):
+                    // settle records cumulative overflow itself. Do not replace
+                    // that known cause with a generic missing-counter reset.
+                    guard let dt, direction.settle(bytes, frame: frame) else { return nil }
+                    return Double(bytes) / dt
+                case let .discontinuity(reason):
+                    direction.reset(frame, reason: reason); return nil
+                }
+            }
+            let upRate = settle(delta(upload: true), direction: &s.up)
+            let downRate = settle(delta(upload: false), direction: &s.down)
             s.identity = first.identity.application; s.processes = members
             s.presence = complete ? .present : .unknown; s.date = e.occurredAt; s.mono = e.monotonicOccurredAt
             s.rate = .init(uploadBytesPerSecond: upRate, downloadBytesPerSecond: downRate,
@@ -206,6 +218,7 @@ public struct ProcessNetworkAggregator: Sendable {
             for row in members { if let id = row.identity.instanceID { nextPrevious[id] = row } }
         }
         previous = nextPrevious; previousGroups = nextGroups; previousComplete = complete
+        previousCadence = validCadence ? frame.samplingInterval : nil
         envelope = e
         let perApp = min(budget.historyPerApplication, budget.totalHistory / max(1, states.count))
         let cutoff = e.monotonicOccurredAt.nanoseconds > 7_200_000_000_000 ? e.monotonicOccurredAt.nanoseconds - 7_200_000_000_000 : 0

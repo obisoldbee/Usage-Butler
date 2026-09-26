@@ -45,6 +45,7 @@ import UsageButlerUI
             }
         }
         let snapshot = runtime.menuModel.processNetwork.snapshot
+        let responderType = NSApp.keyWindow?.firstResponder.map { String(describing: type(of: $0)) } ?? "none"
         // No directory enumeration on the main thread. A fixed, bounded
         // cadence captures the actual window without scanning user folders.
         if ticks % 5 == 0, captured.count < 128,
@@ -60,6 +61,7 @@ import UsageButlerUI
         let record: [String: Any] = ["pid": getpid(), "bundle": Bundle.main.bundleURL.path,
             "executable": Bundle.main.executableURL?.path ?? "", "at": ISO8601DateFormatter().string(from: Date()),
             "mode": "network-only-live", "tick": ticks, "taskInfoResult": result,
+            "fullKeyboardAccess": NSApp.isFullKeyboardAccessEnabled, "firstResponderType": responderType,
             "footprint": String(info.phys_footprint), "resident": String(info.resident_size),
             "state": snapshot?.state.rawValue ?? "none", "sequence": snapshot.map { String($0.sequence) } ?? "",
             "apps": snapshot?.applications.count ?? 0, "historyPoints": snapshot?.historyPointCount ?? 0,

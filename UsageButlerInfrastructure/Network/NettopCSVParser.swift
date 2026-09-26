@@ -21,10 +21,13 @@ public struct NettopCSVParser: Sendable {
         var result: [NettopCSVRecord] = []
         for byte in data {
             if byte == 10 {
+                // Only the CR in a terminal CRLF pair is framing. An internal
+                // CR remains a control character and invalidates the row.
+                if line.last == 13 { line.removeLast() }
                 if discarding { result.append(.invalid) }
                 else if !line.isEmpty { result.append(parse(line)) }
                 line.removeAll(keepingCapacity: true); discarding = false
-            } else if byte != 13 {
+            } else {
                 if line.count < Self.maximumLineBytes, !discarding { line.append(byte) }
                 else { line.removeAll(keepingCapacity: true); discarding = true }
             }

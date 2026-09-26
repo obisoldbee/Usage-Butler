@@ -262,6 +262,10 @@ final class ProcessNetworkTests: XCTestCase {
         let apps = try XCTUnwrap(object["applications"] as? [[String: Any]])
         XCTAssertTrue(apps[0]["connectionCount"] is NSNull)
         XCTAssertEqual(object["version"] as? Int, 1)
+        XCTAssertEqual(Set(object.keys), ["schema", "version", "fixture", "source", "session", "sequence",
+            "state", "sourceIssue", "exportedAt", "sourceSampledAt", "sourceMonotonicNanoseconds",
+            "timestampMethod", "coverage", "windowSeconds", "historyIncluded", "truncated",
+            "lostFrames", "redaction", "applications"])
         a.apply(frame(3, []))
         XCTAssertEqual(data, try ProcessNetworkExport.encode(snapshot: snapshot, keys: ["app"], now: snapshot.sampledAt!, window: 60, includeHistory: true))
     }
@@ -293,6 +297,169 @@ final class ProcessNetworkTests: XCTestCase {
             XCTAssertFalse(text.contains(excluded), "export must not include \(excluded)")
         }
     }
+    func testExportPreservesSubsecondUTCAndDirectionalStartsAcrossSessions() throws {
+        var old = ProcessNetworkAggregator(sessionID: session)
+        old.apply(frame(1, [row(up: 0, down: 10)], time: 250_000_000))
+        old.apply(frame(2, [row(up: 0, down: nil)], time: 1_000_000_000))
+        let next = CaptureSessionID(rawValue: "subsecond-new-session")
+        var fresh = ProcessNetworkAggregator(sessionID: next, retained: old.snapshot())
+        fresh.apply(frame(1, [row(up: 100, down: 20)], time: 1_250_000_000, session: next))
+        fresh.apply(frame(2, [row(up: 100, down: 1)], time: 2_000_000_000, session: next))
+        let snapshot = fresh.snapshot(), app = try XCTUnwrap(snapshot.applications["app"])
+        let data = try ProcessNetworkExport.encode(snapshot: snapshot, keys: ["app"],
+            now: snapshot.sampledAt!, window: 60, includeHistory: true,
+            monotonicNow: .init(nanoseconds: 2_000_000_000))
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let exported = try XCTUnwrap((root["applications"] as? [[String: Any]])?.first)
+        let points = try XCTUnwrap(exported["history"] as? [[String: Any]])
+        let up = try XCTUnwrap(exported["uploadSegment"] as? [String: Any])
+        let down = try XCTUnwrap(exported["downloadSegment"] as? [String: Any])
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        func checkDate(_ value: Any?, _ expected: Date) throws {
+            let text = try XCTUnwrap(value as? String)
+            XCTAssertNotNil(text.range(of: #"\.\d{3}Z$"#, options: .regularExpression))
+            let actual = try XCTUnwrap(formatter.date(from: text))
+            XCTAssertEqual(actual.timeIntervalSince1970, expected.timeIntervalSince1970, accuracy: 0.001)
+        }
+        try checkDate(root["exportedAt"], snapshot.sampledAt!)
+        try checkDate(root["sourceSampledAt"], snapshot.sampledAt!)
+        try checkDate(exported["sampledAt"], app.sampledAt)
+        for (point, original) in zip(points, app.history) { try checkDate(point["at"], original.sampledAt) }
+        try checkDate(up["since"], app.total.upload.since!)
+        try checkDate(down["since"], app.total.download.since!)
+        XCTAssertNotEqual(up["since"] as? String, down["since"] as? String)
+        XCTAssertEqual(up["sinceMonotonicNanoseconds"] as? String, "1250000000")
+        XCTAssertEqual(down["sinceMonotonicNanoseconds"] as? String, "2000000000")
+        XCTAssertEqual(points[0]["monotonicNanoseconds"] as? String, "250000000")
+        XCTAssertNotEqual(points[0]["session"] as? String, points[2]["session"] as? String)
+        XCTAssertEqual(exported["uploadBytesPerSecond"] as? Double, 0)
+        XCTAssertTrue(exported["downloadBytesPerSecond"] is NSNull)
+    }
+
+    func testParserRejectsInternalCarriageReturnsWithoutJoiningNumbersOrNames() {
+        for malformed in ["x.1,1\r2,3,", "x.1,1,2\r3,", "x\ry.1,1,2,", "\"x\ry.1\",1,2,", "x.1,\"1\r2\",3,"] {
+            var parser = NettopCSVParser()
+            XCTAssertEqual(parser.feed(Data(",bytes_in,bytes_out,\r\n".utf8)), [.header])
+            XCTAssertEqual(parser.feed(Data((malformed + "\r\n").utf8)), [.invalid], malformed)
+            XCTAssertEqual(parser.feed(Data("x.1,12,3,\r".utf8)), [])
+            XCTAssertEqual(parser.feed(Data("\n".utf8)), [.process(pid: 1, name: "x", download: 12, upload: 3)])
+        }
+        var oversized = NettopCSVParser()
+        _ = oversized.feed(Data(repeating: 13, count: NettopCSVParser.maximumLineBytes + 2))
+        XCTAssertEqual(oversized.feed(Data("\n,bytes_in,bytes_out,\r\n".utf8)), [.invalid, .header])
+    }
+
+    func testProcessSettlementUsesBothAdjacentCadencesAndStillBreaksRealGaps() {
+        for (before, after) in [(5.0, 1.0), (1.0, 5.0)] {
+            var a = ProcessNetworkAggregator(sessionID: session)
+            a.apply(frame(1, [row(up: 0)], time: 1_000_000_000, cadence: before))
+            a.apply(frame(2, [row(up: 500)], time: 6_000_000_000, cadence: after))
+            XCTAssertEqual(a.snapshot().applications["app"]?.rate?.uploadBytesPerSecond, 100)
+            XCTAssertEqual(a.snapshot().applications["app"]?.total.upload.bytes, 500)
+            a.apply(frame(3, [row(up: 900)], time: 26_000_000_000, cadence: after))
+            XCTAssertNil(a.snapshot().applications["app"]?.rate?.uploadBytesPerSecond)
+            XCTAssertEqual(a.snapshot().applications["app"]?.total.upload.breakReason, "sampling-gap")
+        }
+    }
+
+    func testInvalidProcessCadenceCannotBridgeHealthyIntervals() {
+        for invalid in [Double.nan, .infinity, 0, -1] {
+            var a = ProcessNetworkAggregator(sessionID: session)
+            a.apply(frame(1, [row(up: 0)], cadence: 5))
+            a.apply(frame(2, [row(up: 100)], cadence: invalid))
+            XCTAssertEqual(a.snapshot().state, .partial)
+            XCTAssertNil(a.snapshot().applications["app"]?.total.upload.bytes)
+            a.apply(frame(3, [row(up: 200)], cadence: 1))
+            XCTAssertNil(a.snapshot().applications["app"]?.rate?.uploadBytesPerSecond)
+            a.apply(frame(4, [row(up: 210)], cadence: 1))
+            XCTAssertEqual(a.snapshot().applications["app"]?.total.upload.bytes, 10)
+        }
+    }
+
+    func testCumulativeOverflowKeepsKnownReasonAndIndependentDirection() {
+        var a = ProcessNetworkAggregator(sessionID: session)
+        a.apply(frame(1, [row(up: 0), row(11, id: "11:1", up: 0)]))
+        a.apply(frame(2, [row(up: UInt64.max - 20), row(11, id: "11:1", up: 10)]))
+        XCTAssertEqual(a.snapshot().applications["app"]?.total.upload.bytes, UInt64.max - 10)
+        a.apply(frame(3, [row(up: UInt64.max - 10), row(11, id: "11:1", up: 30)]))
+        let app = a.snapshot().applications["app"]
+        XCTAssertNil(app?.total.upload.bytes); XCTAssertNil(app?.rate?.uploadBytesPerSecond)
+        XCTAssertEqual(app?.total.upload.breakReason, "overflow")
+        XCTAssertEqual(app?.total.upload.sinceMonotonic?.nanoseconds, 3_000_000_000)
+        XCTAssertEqual(app?.total.download.bytes, 0)
+        a.apply(frame(4, [row(up: UInt64.max - 9), row(11, id: "11:1", up: 31)]))
+        XCTAssertEqual(a.snapshot().applications["app"]?.total.upload.bytes, 2)
+        XCTAssertEqual(a.snapshot().applications["app"]?.total.upload.breakReason, "overflow")
+    }
+
+    func testFrameDeltaOverflowHasKnownReasonRatherThanUnknownCounter() {
+        var a = ProcessNetworkAggregator(sessionID: session)
+        a.apply(frame(1, [row(up: 0), row(11, id: "11:1", up: 0)]))
+        a.apply(frame(2, [row(up: UInt64.max), row(11, id: "11:1", up: 1)]))
+        XCTAssertNil(a.snapshot().applications["app"]?.total.upload.bytes)
+        XCTAssertEqual(a.snapshot().applications["app"]?.total.upload.breakReason, "overflow")
+    }
+
+    func testOwnedPTYTransportPreservesLFCRLFAndRejectsInternalCR() throws {
+        var master: Int32 = -1, slave: Int32 = -1
+        XCTAssertEqual(openpty(&master, &slave, nil, nil, nil), 0)
+        guard master >= 0, slave >= 0 else { return }
+        defer { close(master); close(slave) }
+        var before = termios()
+        XCTAssertEqual(tcgetattr(slave, &before), 0)
+        print("[owned-pty] defaultOutputFlags=\(before.c_oflag)")
+        // Exercise the observed driver translation explicitly on this owned
+        // terminal only, regardless of unrelated terminal preferences.
+        before.c_oflag |= tcflag_t(OPOST | ONLCR)
+        XCTAssertEqual(tcsetattr(slave, TCSANOW, &before), 0)
+        XCTAssertNil(NettopProcessSource.configureOwnedPTYOutput(slave))
+        var after = termios()
+        XCTAssertEqual(tcgetattr(slave, &after), 0)
+        XCTAssertEqual(after.c_oflag, before.c_oflag & ~tcflag_t(ONLCR))
+        XCTAssertEqual(after.c_iflag, before.c_iflag)
+        XCTAssertEqual(after.c_lflag, before.c_lflag)
+        XCTAssertEqual(after.c_cflag, before.c_cflag)
+        XCTAssertEqual(isatty(master), 1); XCTAssertEqual(isatty(slave), 1)
+        let payload = Data(",bytes_in,bytes_out,\nvalid.12,1,2,\r\nbad.13,1\r2,3,\r\n".utf8)
+        let written = payload.withUnsafeBytes { Darwin.write(slave, $0.baseAddress, $0.count) }
+        XCTAssertEqual(written, payload.count)
+        var received = Data(), buffer = [UInt8](repeating: 0, count: 4_096)
+        while received.filter({ $0 == 10 }).count < 3 {
+            var ready = pollfd(fd: master, events: Int16(POLLIN), revents: 0)
+            guard poll(&ready, 1, 1_000) > 0 else { XCTFail("owned PTY did not deliver written bytes"); return }
+            let count = Darwin.read(master, &buffer, buffer.count)
+            guard count > 0, received.count + count <= 4_096 else { XCTFail("invalid owned PTY read"); return }
+            received.append(contentsOf: buffer.prefix(count))
+        }
+        XCTAssertEqual(received, payload, "owned PTY must not expand legal CRLF to CRCRLF")
+        var parser = NettopCSVParser()
+        XCTAssertEqual(parser.feed(received), [.header, .process(pid: 12, name: "valid", download: 1, upload: 2), .invalid])
+    }
+
+    func testPTYConfigurationFailureIsExplicit() {
+        XCTAssertEqual(NettopProcessSource.configureOwnedPTYOutput(-1), EBADF)
+        XCTAssertEqual(ProcessNetworkLifecycleEvent.Reason.sourceIssue("pty-config-failed"), .ptyConfigurationFailed)
+    }
+
+    func testApplicationSegmentReasonsAreLocalized() {
+        let expected = ["members-changed": "已观察进程成员变化后重新起算",
+                        "incomplete-frame": "连续完整采样不足，重新起算",
+                        "counter-unavailable-or-reset": "计数不可用或重置后重新起算",
+                        "overflow": "累计超出可表示范围后重新起算"]
+        for (code, explanation) in expected {
+            XCTAssertEqual(NetworkStatusRules.sessionTotalReasonText(code), explanation)
+            let segment = DirectionByteTotal(bytes: nil, since: Date(timeIntervalSince1970: 1_700_000_000.25),
+                sinceMonotonic: .init(nanoseconds: 250_000_000), breakReason: code)
+            for direction in ["上传累计", "下载累计"] {
+                let text = NetworkStatusRules.applicationSegmentText(segment, direction: direction)
+                XCTAssertTrue(text.contains(direction)); XCTAssertTrue(text.contains(explanation))
+                XCTAssertFalse(text.contains(code)); XCTAssertFalse(text.contains("详见网络设置"))
+                XCTAssertTrue(text.contains(segment.since!.formatted(date: .omitted, time: .standard)))
+            }
+        }
+    }
+
     @MainActor func testUIStateSearchSortWatchAndBackRetainsIdentity() {
         var a = ProcessNetworkAggregator(sessionID: session)
         a.apply(frame(1, [row(app: "Z"), row(11, id: "11", app: "A")]))

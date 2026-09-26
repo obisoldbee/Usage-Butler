@@ -167,11 +167,10 @@ struct ProcessNetworkApplicationsView: View {
             Text(app.identity.name).font(.headline).textSelection(.enabled)
             Text(presence(app)).font(.caption).foregroundStyle(.secondary)
             status
-            if let notice = NetworkStatusRules.historyRestartNotice(app.total, samples: app.history,
-                now: now, window: model.range.duration) {
-                Text(notice).font(.caption2).foregroundStyle(.orange)
-                    .accessibilityIdentifier("network.apps.historyRestart")
-            }
+            Text(NetworkStatusRules.applicationSegmentText(app.total.upload, direction: String(localized: "上传累计")))
+                .font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier("network.apps.segment.upload")
+            Text(NetworkStatusRules.applicationSegmentText(app.total.download, direction: String(localized: "下载累计")))
+                .font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier("network.apps.segment.download")
             NetworkTrendView(range: $model.range, frame: model.frame(for: app, now: now),
                 total: app.total, rate: app.rate, stale: !model.fresh(app, now: now), interface: app.identity.key)
             Text("进程与归属").font(.subheadline.weight(.semibold))

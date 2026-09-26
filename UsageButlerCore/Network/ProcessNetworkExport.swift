@@ -9,6 +9,9 @@ public enum ProcessNetworkExport {
                               now: Date, window: TimeInterval, includeHistory: Bool,
                               monotonicNow: MonotonicInstant = .init(nanoseconds: DispatchTime.now().uptimeNanoseconds)) throws -> Data {
         let formatter = ISO8601DateFormatter()
+        // Existing v1 date fields use stable UTC millisecond precision.
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let none = NSNull()
         var sessionAliases: [CaptureSessionID: String] = [snapshot.sessionID: "session-1"]
         func sessionAlias(_ id: CaptureSessionID) -> String {

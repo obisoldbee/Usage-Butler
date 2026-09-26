@@ -145,7 +145,8 @@ final class AppRuntime: ObservableObject {
         #else
         let useProcessSource = true
         #endif
-        processNetworkCollector = useProcessSource ? ProcessNetworkCollector(makeSource: { NettopProcessSource(sessionID: $0) }) : nil
+        processNetworkCollector = useProcessSource ? ProcessNetworkCollector(record: ProcessNetworkLifecycleLog.record,
+            makeSource: { NettopProcessSource(sessionID: $0, record: ProcessNetworkLifecycleLog.record) }) : nil
         configureMenuActions()
         menuModel.updateGlobalShortcutText(
             defaults.string(forKey: ProviderPreferenceKey.globalShortcut)
