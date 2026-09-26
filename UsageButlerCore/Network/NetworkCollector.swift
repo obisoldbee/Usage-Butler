@@ -248,6 +248,12 @@ public actor NetworkCollector {
             retainedHistoryExpiry = nil
         }
         aggregator = NetworkAggregator(sessionID: sessionID, retainedInterfaces: retainedInterfaces, retainedHistory: retainedHistory)
+        // These are the stopped-state fallback. The active aggregator now owns
+        // the retained observation; keeping another copy pins an old history
+        // until the next stop even after its samples have expired.
+        retainedInterfaces = [:]
+        retainedHistory = [:]
+        retainedHistoryExpiry = nil
         collectionState = .starting
         consumeTask = Task { await self.consume(source: source, sessionID: sessionID) }
     }
@@ -274,10 +280,7 @@ public actor NetworkCollector {
 
     private func handle(_ event: NetworkSourceEvent) {
         guard started, settings.collectionEnabled, event.envelope.sessionID == aggregator?.sessionID else { return }
-        guard var aggregator else { return }
-        let applied = aggregator.apply(event)
-        self.aggregator = aggregator
-        guard applied else { return }
+        guard aggregator?.apply(event) == true else { return }
         switch event.payload {
         case let .heartbeat(observed): capabilities = observed
         case .interfaceEnumeration(.failed): collectionState = .partial(reason: "interface-enumeration-failed")
@@ -342,13 +345,11 @@ public actor NetworkCollector {
 
     private func buildSnapshot(asOf reading: ClockReading) -> NetworkSnapshot {
         _ = expireHistory(at: reading.monotonicTime)
-        if var aggregator {
-            let raw = aggregator.snapshot(
+        if let raw = aggregator?.snapshot(
                 asOf: reading.wallTime,
                 monotonicAsOf: reading.monotonicTime,
                 collectionState: collectionState
-            )
-            self.aggregator = aggregator
+            ) {
             return raw.applyingCoverageProfile(coverageProfile)
         }
         return NetworkSnapshot(
@@ -367,11 +368,7 @@ public actor NetworkCollector {
     }
 
     @discardableResult private func expireHistory(at time: MonotonicInstant) -> Bool {
-        if var current = aggregator {
-            let expired = current.expireHistory(at: time)
-            aggregator = current
-            return expired
-        }
+        if let expired = aggregator?.expireHistory(at: time) { return expired }
         guard retainedHistoryExpiry.map({ time > $0 }) ?? true else { return false }
         // Same-process uptime. Do not subtract across a rollback/unknown domain.
         guard retainedHistory.values.allSatisfy({ $0.allSatisfy { $0.sampledMonotonic <= time } }) else { return false }

@@ -18,7 +18,8 @@ final class NetworkRateHistoryBufferTests: XCTestCase {
         sampleNs: UInt64? = nil,
         epoch: UInt64 = 0,
         interfaces: [String] = ["en0"],
-        rates: [String: NetworkRate] = [:]
+        rates: [String: NetworkRate] = [:],
+        history: [String: [NetworkRateSample]]? = nil
     ) -> NetworkSnapshot {
         var interfaceEntries: [String: InterfaceCounters] = [:]
         for name in interfaces {
@@ -54,7 +55,8 @@ final class NetworkRateHistoryBufferTests: XCTestCase {
             capabilities: .unavailable,
             interfaces: interfaceEntries,
             apps: [:],
-            interfaceRates: rates
+            interfaceRates: rates,
+            rateHistory: history
         )
     }
 
@@ -178,5 +180,81 @@ final class NetworkRateHistoryBufferTests: XCTestCase {
         buffer.prune(keeping: ["en0"])
         XCTAssertEqual(buffer.series(for: "en0").count, 1)
         XCTAssertEqual(buffer.series(for: "utun5"), [])
+    }
+
+    private func storageAddress(_ series: [NetworkRateSample]) -> UInt {
+        series.withUnsafeBufferPointer { UInt(bitPattern: $0.baseAddress) }
+    }
+
+    func testSourceOwnedBatchSharesStorageAndLaterWritesKeepSnapshotImmutable() {
+        var source = NetworkRateHistoryBuffer()
+        for tick in 1...50 {
+            let ns = UInt64(tick) * 1_000_000_000
+            source.record(snapshot(publishNs: ns, rates: ["en0": rate(10, 1000, sampleNs: ns)]))
+        }
+        let published = snapshot(publishNs: 50_000_000_000, history: source.allSeries)
+        let frozen = published.rateHistory!["en0"]!
+        var display = NetworkRateHistoryBuffer()
+        display.record(published)
+        XCTAssertEqual(storageAddress(display.series(for: "en0")), storageAddress(frozen),
+                       "a canonical complete batch must not allocate another full history")
+        let restored = NetworkRateHistoryBuffer(series: published.rateHistory!)
+        XCTAssertEqual(storageAddress(restored.series(for: "en0")), storageAddress(frozen))
+
+        source.record(snapshot(publishNs: 51_000_000_000, rates: ["en0": rate(20, 2000, sampleNs: 51_000_000_000)]))
+        XCTAssertEqual(source.count, 51)
+        XCTAssertEqual(frozen.count, 50)
+        XCTAssertEqual(published.rateHistory!["en0"], frozen)
+        XCTAssertEqual(display.series(for: "en0"), frozen)
+        XCTAssertNotEqual(storageAddress(source.series(for: "en0")), storageAddress(frozen))
+        display.record(snapshot(publishNs: 51_000_000_000, history: source.allSeries))
+        XCTAssertEqual(storageAddress(display.series(for: "en0")), storageAddress(source.series(for: "en0")))
+    }
+
+    func testLegacyContinuityRepairKeepsSuppliedAnchorsAndDirectionalGaps() {
+        func point(_ tick: Int, upload: Double?, download: Double?, uploadID: String? = nil, downloadID: String? = nil) -> NetworkRateSample {
+            .init(captureSessionID: session, counterEpoch: .init(rawValue: 0),
+                  sampledAt: baseWall.addingTimeInterval(Double(tick)),
+                  sampledMonotonic: .init(nanoseconds: UInt64(tick) * 1_000_000_000),
+                  uploadBytesPerSecond: upload, downloadBytesPerSecond: download,
+                  interfaceName: "en0", samplingInterval: 1,
+                  uploadContinuityID: uploadID, downloadContinuityID: downloadID)
+        }
+        let legacy = [point(1, upload: 10, download: 0, uploadID: "source-anchor"),
+                      point(2, upload: nil, download: 0, uploadID: "invalid-for-unknown"),
+                      point(3, upload: 10, download: nil), point(4, upload: 10, download: 20)]
+        let repaired = NetworkRateHistoryBuffer.identifyingContinuity(legacy)
+        XCTAssertEqual(repaired.map(\.sampleID), legacy.map(\.sampleID))
+        XCTAssertEqual(repaired[0].uploadContinuityID, "source-anchor")
+        XCTAssertNil(repaired[1].uploadContinuityID)
+        XCTAssertEqual(repaired[2].uploadContinuityID, legacy[2].sampleID)
+        XCTAssertEqual(repaired[3].uploadContinuityID, repaired[2].uploadContinuityID)
+        XCTAssertEqual(repaired[1].downloadContinuityID, legacy[0].sampleID)
+        XCTAssertNil(repaired[2].downloadContinuityID)
+        XCTAssertEqual(repaired[3].downloadContinuityID, legacy[3].sampleID)
+        XCTAssertEqual(legacy[1].uploadContinuityID, "invalid-for-unknown", "repair must not mutate its input")
+        let repeated = NetworkRateHistoryBuffer.identifyingContinuity(repaired)
+        XCTAssertEqual(storageAddress(repeated), storageAddress(repaired), "a repaired batch must be reusable")
+    }
+
+    func testSharedBatchStillEnforcesCapacityAndTimeWithoutMutatingInput() {
+        let points = [1, 2, 3, 7199, 7200, 7201].map { tick in
+            NetworkRateSample(captureSessionID: session, counterEpoch: .init(rawValue: 0),
+                sampledAt: baseWall.addingTimeInterval(Double(tick)),
+                sampledMonotonic: .init(nanoseconds: UInt64(tick) * 1_000_000_000),
+                uploadBytesPerSecond: 0, downloadBytesPerSecond: nil,
+                interfaceName: "en0", samplingInterval: 1, uploadContinuityID: "retained-anchor")
+        }
+        let published = snapshot(publishNs: 7203_000_000_000, history: ["en0": points])
+        var timeBounded = NetworkRateHistoryBuffer()
+        timeBounded.record(published)
+        XCTAssertEqual(timeBounded.series(for: "en0"), Array(points.suffix(4)), "2 h cutoff remains inclusive")
+        var countBounded = NetworkRateHistoryBuffer(capacity: 3)
+        countBounded.record(published)
+        XCTAssertEqual(countBounded.series(for: "en0"), Array(points.suffix(3)))
+        XCTAssertEqual(published.rateHistory!["en0"], points)
+        XCTAssertTrue(countBounded.expire(at: .init(nanoseconds: 14402_000_000_000)))
+        XCTAssertEqual(countBounded.count, 0)
+        XCTAssertEqual(published.rateHistory!["en0"]?.count, 6)
     }
 }

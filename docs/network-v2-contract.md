@@ -62,6 +62,8 @@ NetworkRateSample.sampleID 由 source/interface/session/epoch/monotonic 组成�
 
 ## 0.4.0 进程观察与接口复核
 
+0.5.1接口历史存储：已经满足点数上限、并为每个已知方向携带源continuity ID的完整批次复用不可变数组；未知方向不携带ID。只有旧格式缺标识或需要清理未知方向标识时才写时复制规范化。源端后续追加不能改变已发布快照，容量与两小时单调时间清理照常执行。恢复时停止状态的备用历史移交给active aggregator后释放，下一次停止再保存当时的最新历史。此实现约束不改变采样节奏、缺口、独立纵轴和时间范围，也不代表主程序内存不随尚未填满的真实历史增长。
+
 [真实应用合同](network-panel-and-app-observation.md)新增独立 process schema/source/session/collector。旧 NetworkSnapshot v1/v2 codec 不变；旧 apps/flow fixture 不能升级为生产进程来源。新本地导出 schema 为 usagebutler.network.process-export / version 1，所有 UInt64 与单调时间使用十进制字符串，未知字段保留 null。
 
 接口累计和图表共同使用相邻 cadence 的最大值、2.5 倍和至少2秒阈值。source 保留最新8事件、完整快照保留最新1项；丢号增加 loss 并重建接口基线。休眠保留用户偏好、停止源，唤醒新会话；重复唤醒不额外创建来源。2小时保留清理覆盖全部接口、旧会话与停止后的发布，不对回退的单调时钟跨域硬减。

@@ -19,7 +19,8 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
 
     public init(capacity: Int = NetworkRateHistoryBuffer.defaultCapacity, series: [String: [NetworkRateSample]] = [:]) {
         self.capacity = max(1, capacity)
-        samples = series.mapValues { Array($0.suffix(max(1, capacity))) }
+        let limit = self.capacity
+        samples = series.mapValues { $0.count > limit ? Array($0.suffix(limit)) : $0 }
         lastExpiryTime = samples.values.reduce(nil as MonotonicInstant?) { latest, series in
             series.reduce(latest) { latest, point in max(latest ?? point.sampledMonotonic, point.sampledMonotonic) }
         }
@@ -40,7 +41,7 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
     public mutating func record(_ snapshot: NetworkSnapshot) {
         if let history = snapshot.rateHistory {
             samples = history.mapValues { series in
-                Self.identifyingContinuity(Array(series.suffix(capacity)))
+                Self.identifyingContinuity(series.count > capacity ? Array(series.suffix(capacity)) : series)
             }
             _ = expire(at: snapshot.monotonicAsOf)
             return
@@ -53,8 +54,8 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
     }
 
     public mutating func record(source: InterfaceCounters, rate: NetworkRate?, session: CaptureSessionID) {
-        var series = samples[source.name] ?? []
-        if let last = series.last, last.captureSessionID == session {
+        let last = samples[source.name]?.last
+        if let last, last.captureSessionID == session {
             if last.sampledMonotonic == source.monotonicAsOf {
                 republishedSampleCount += 1
                 return
@@ -68,11 +69,15 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
             downloadBytesPerSecond: rate?.downloadBytesPerSecond,
             interfaceName: source.name, samplingInterval: source.samplingInterval
         )
-        series.append(Self.identify(next, after: series.last))
+        // Mutate through the dictionary's modify accessor. A local array copy
+        // would keep the old storage alive and force COW on every source tick,
+        // even between publications when this buffer has sole ownership.
+        samples[source.name, default: []].append(Self.identify(next, after: last))
         // Time and point limits both apply, including when the source is faster
         // or slower than 1 Hz. Monotonic retention ignores wall-clock changes.
-        if series.count > capacity { series.removeFirst(series.count - capacity) }
-        samples[source.name] = series
+        if let count = samples[source.name]?.count, count > capacity {
+            samples[source.name]?.removeFirst(count - capacity)
+        }
         // The caller expires once at the complete source batch/publication
         // boundary. Sweeping all interfaces for every row is quadratic.
     }
@@ -99,8 +104,18 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
 
     /// Source-owned IDs carry through subsequent windows and bounded trims.
     public static func identifyingContinuity(_ series: [NetworkRateSample]) -> [NetworkRateSample] {
-        var result: [NetworkRateSample] = []
-        for sample in series { result.append(identify(sample, after: result.last)) }
+        // Source-owned batches already have anchors. Share their immutable
+        // storage with the snapshot instead of allocating another full history
+        // on each publication. Legacy input still receives the same repair.
+        guard series.contains(where: {
+            ($0.uploadBytesPerSecond == nil) != ($0.uploadContinuityID == nil)
+                || ($0.downloadBytesPerSecond == nil) != ($0.downloadContinuityID == nil)
+        }) else { return series }
+        var result = series
+        for index in result.indices {
+            let repaired = identify(result[index], after: index == result.startIndex ? nil : result[index - 1])
+            if repaired != result[index] { result[index] = repaired }
+        }
         return result
     }
 

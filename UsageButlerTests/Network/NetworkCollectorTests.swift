@@ -467,6 +467,21 @@ final class NetworkCollectorTests: XCTestCase {
         XCTAssertTrue(stopped.interfaceRates.isEmpty)
         XCTAssertTrue(stopped.apps.isEmpty)
         XCTAssertEqual(stopped.coverage.bytes, .unavailable(reason: "collection-stopped"))
+        let retained = stopped.rateHistory?["en0"]
+        XCTAssertEqual(retained?.count, 1)
+        await collector.setCollectionEnabled(true)
+        let restarted = await collector.currentSnapshot()
+        XCTAssertNotEqual(restarted.sessionID, source.sessionID)
+        XCTAssertEqual(restarted.rateHistory?["en0"], retained)
+        // Moving fallback ownership into the active aggregator must survive
+        // a second stop, including a stop before the new source has sampled.
+        await collector.suspend()
+        let suspended = await collector.currentSnapshot()
+        XCTAssertEqual(suspended.rateHistory?["en0"], retained)
+        await collector.resume()
+        let resumed = await collector.currentSnapshot()
+        XCTAssertEqual(resumed.rateHistory?["en0"], retained)
+        await collector.shutdown()
     }
 
     func testFinishedStreamMarksDisconnectedAndRefreshNowStartsNewSession() async {
