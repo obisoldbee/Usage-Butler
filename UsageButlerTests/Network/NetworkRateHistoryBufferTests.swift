@@ -186,6 +186,82 @@ final class NetworkRateHistoryBufferTests: XCTestCase {
         series.withUnsafeBufferPointer { UInt(bitPattern: $0.baseAddress) }
     }
 
+    @inline(never) private func expiryBuffer() -> NetworkRateHistoryBuffer {
+        .init(series: Dictionary(uniqueKeysWithValues: ["en0", "utun5", "lo0"].map { name in
+            (name, (1...128).map { tick in
+                NetworkRateSample(captureSessionID: session, counterEpoch: .init(rawValue: 7),
+                    sampledAt: baseWall.addingTimeInterval(Double(tick)),
+                    sampledMonotonic: .init(nanoseconds: UInt64(tick) * 1_000_000_000),
+                    uploadBytesPerSecond: 0, downloadBytesPerSecond: nil, interfaceName: name,
+                    samplingInterval: 1, uploadContinuityID: "anchor-\(name)")
+            })
+        }))
+    }
+
+    /// Only integer addresses escape; inspection must not create an Array owner
+    /// that changes the allocation behavior being tested.
+    @inline(never) private func storageAddresses(_ buffer: inout NetworkRateHistoryBuffer) -> [String: UInt] {
+        buffer.allSeries.mapValues { storageAddress($0) }
+    }
+
+    func testUniqueOwnerTimeExpiryReusesEveryInterfaceStorage() {
+        var buffer = expiryBuffer()
+        let original = storageAddresses(&buffer)
+        for step in 1...8 {
+            XCTAssertTrue(buffer.expire(at: .init(nanoseconds: UInt64(7200 + step) * 1_000_000_000 + 250_000_000)))
+            XCTAssertEqual(storageAddresses(&buffer), original,
+                           "expiring values must not keep a hidden dictionary owner")
+            XCTAssertEqual(buffer.count, 3 * (128 - step))
+            XCTAssertTrue(buffer.allSeries.values.allSatisfy {
+                $0.first?.sampledMonotonic.nanoseconds == UInt64(step + 1) * 1_000_000_000
+                    && $0.last?.sampledMonotonic.nanoseconds == 128_000_000_000
+            })
+        }
+    }
+
+    func testTimeExpiryCopiesPublishedStorageOnceThenReusesTheNewStorage() {
+        var buffer = expiryBuffer()
+        let published = snapshot(publishNs: 128_000_000_000,
+            interfaces: ["en0", "utun5", "lo0"], history: buffer.allSeries)
+        let shared = storageAddresses(&buffer)
+        XCTAssertTrue(buffer.expire(at: .init(nanoseconds: 7201_250_000_000)))
+        let detached = storageAddresses(&buffer)
+        XCTAssertTrue(shared.keys.allSatisfy { shared[$0] != detached[$0] })
+        for step in 2...8 {
+            XCTAssertTrue(buffer.expire(at: .init(nanoseconds: UInt64(7200 + step) * 1_000_000_000 + 250_000_000)))
+            XCTAssertEqual(storageAddresses(&buffer), detached,
+                           "the old immutable snapshot does not own the new source storage")
+        }
+        XCTAssertEqual(buffer.count, 3 * 120)
+        XCTAssertTrue(published.rateHistory!.values.allSatisfy {
+            $0.count == 128 && $0.first?.sampledMonotonic.nanoseconds == 1_000_000_000
+                && $0.last?.sampledMonotonic.nanoseconds == 128_000_000_000
+        })
+        withExtendedLifetime(published) {}
+    }
+
+    func testExpiryKeepsInclusiveCutoffAndRejectsClockRollbackAtCustomCapacity() {
+        let points: [NetworkRateSample] = (7199...7202).map { tick -> NetworkRateSample in
+            let upload: Double? = tick == 7201 ? nil : 0
+            let anchor: String? = tick == 7201 ? nil : "anchor-\(tick)"
+            return NetworkRateSample(captureSessionID: .init(rawValue: "session-\(tick % 2)"),
+                counterEpoch: .init(rawValue: UInt64(tick)),
+                sampledAt: baseWall.addingTimeInterval(Double(7202 - tick)),
+                sampledMonotonic: .init(nanoseconds: UInt64(tick) * 1_000_000_000),
+                uploadBytesPerSecond: upload, downloadBytesPerSecond: nil,
+                interfaceName: "en0", samplingInterval: 1,
+                uploadContinuityID: anchor)
+        }
+        var buffer = NetworkRateHistoryBuffer(capacity: 3, series: ["en0": points])
+        XCTAssertFalse(buffer.expire(at: .init(nanoseconds: 14400_000_000_000)))
+        XCTAssertEqual(buffer.series(for: "en0"), Array(points.suffix(3)))
+        XCTAssertFalse(buffer.expire(at: .init(nanoseconds: 14399_000_000_000)))
+        XCTAssertTrue(buffer.expire(at: .init(nanoseconds: 14401_000_000_000)))
+        XCTAssertEqual(buffer.series(for: "en0"), Array(points.suffix(2)),
+                       "unknown direction, gap, session, epoch and wall rollback survive trimming")
+        XCTAssertEqual(points.count, 4)
+    }
+
     func testSourceOwnedBatchSharesStorageAndLaterWritesKeepSnapshotImmutable() {
         var source = NetworkRateHistoryBuffer()
         for tick in 1...50 {

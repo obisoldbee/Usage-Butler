@@ -91,7 +91,10 @@ public struct NetworkRateHistoryBuffer: Equatable, Sendable {
         guard now.nanoseconds > 7_200_000_000_000 else { return false }
         let cutoff = now.nanoseconds - 7_200_000_000_000
         var changed = false
-        for name in samples.keys {
+        // A live Keys view retains the dictionary's array values while entries
+        // are removed, forcing COW even without a published snapshot. Keep only
+        // names so uniquely owned histories can expire in place.
+        for name in Array(samples.keys) {
             guard samples[name]?.contains(where: { $0.sampledMonotonic.nanoseconds < cutoff }) == true,
                   var series = samples.removeValue(forKey: name) else { continue }
             let before = series.count
