@@ -71,6 +71,78 @@ public struct HistoryRange: Codable, Equatable, Sendable {
     }
 }
 
+public struct HistoryQueryScope: Codable, Equatable, Sendable {
+    public let range: HistoryRange
+    public let applicationID: Int64?
+    public let applicationKey: String?
+    public let eventKind: String?
+    public let search: String
+    public init(range: HistoryRange, applicationID: Int64? = nil, applicationKey: String? = nil,
+                eventKind: String? = nil, search: String = "") {
+        self.range = range; self.applicationID = applicationID; self.applicationKey = applicationKey
+        self.eventKind = eventKind; self.search = search.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    public var isValid: Bool {
+        range.isValid && (applicationID.map { $0 > 0 } ?? true) && (applicationKey?.utf8.count ?? 0) <= 8_192
+            && (applicationID == nil || applicationKey == nil) && search.utf8.count <= 256
+            && (eventKind == nil || eventKind == "large" || eventKind == "sustained")
+    }
+}
+
+/// No result cache or long SQLite transaction. An executor rechecks this
+/// fingerprint against the ordered members of each short read transaction.
+public struct HistoryQueryContext: Codable, Equatable, Sendable {
+    public static let lifetimeNanoseconds: UInt64 = 600_000_000_000
+    public let id: String
+    public let generation: String
+    public let fingerprint: String
+    public let createdNanoseconds: UInt64
+    public init(id: String, generation: String, fingerprint: String, createdNanoseconds: UInt64) {
+        self.id = id; self.generation = generation; self.fingerprint = fingerprint; self.createdNanoseconds = createdNanoseconds
+    }
+    public var isValid: Bool {
+        id.utf8.count == 36 && generation.utf8.count == 36 && UUID(uuidString: id) != nil && UUID(uuidString: generation) != nil
+            && fingerprint.utf8.count == 64 && fingerprint.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+}
+
+public struct HistoryQueryRequest: Sendable {
+    public let scope: HistoryQueryScope
+    public let page: Int
+    public let context: HistoryQueryContext?
+    public init(range: HistoryRange, applicationID: Int64? = nil, applicationKey: String? = nil, page: Int = 0,
+                eventKind: String? = nil, search: String = "", context: HistoryQueryContext? = nil) {
+        scope = .init(range: range, applicationID: applicationID, applicationKey: applicationKey, eventKind: eventKind, search: search)
+        self.page = page; self.context = context
+    }
+    public var isValid: Bool { scope.isValid && (0...1023).contains(page) && (page == 0 || context != nil) && (context?.isValid ?? true) }
+}
+
+public struct HistoryQueryContract: Codable, Equatable, Sendable {
+    public let version: Int
+    public let scope: HistoryQueryScope
+    public let context: HistoryQueryContext
+    public let totalEvents: Int
+    public init(scope: HistoryQueryScope, context: HistoryQueryContext, totalEvents: Int) {
+        version = 2; self.scope = scope; self.context = context; self.totalEvents = totalEvents
+    }
+    public func accepts(_ request: HistoryQueryRequest) -> Bool {
+        version == 2 && scope == request.scope && context.isValid && (0...50_000).contains(totalEvents)
+            && (request.context.map { $0 == context } ?? true)
+    }
+}
+
+public enum HistoryQueryFailure: Error, Equatable, Sendable {
+    case changed, expired, incompatible
+    public var code: String {
+        switch self {
+        case .changed: "history.query-context-changed"
+        case .expired: "history.query-context-expired"
+        case .incompatible: "history.query-contract-mismatch"
+        }
+    }
+}
+
 public struct HistoryTotals: Codable, Equatable, Sendable {
     public var upload: UInt64? = 0
     public var download: UInt64? = 0
@@ -190,10 +262,17 @@ public struct HistoryQueryResult: Codable, Equatable, Sendable {
     public let days: [HistoryDailySummary]
     public let events: [HistoryUploadEvent]
     public let coverage: HistoryCoverage
+    // Optional only for decoding older frozen data. Live browsing requires
+    // this versioned contract, including on the first page.
+    public let contract: HistoryQueryContract?
     public init(range: HistoryRange, applications: [HistoryApplicationSummary], totalApplications: Int,
                 page: Int, curve: [HistoryCurveBucket], days: [HistoryDailySummary],
-                events: [HistoryUploadEvent], coverage: HistoryCoverage) {
+                events: [HistoryUploadEvent], coverage: HistoryCoverage, contract: HistoryQueryContract? = nil) {
         self.range = range; self.applications = applications; self.totalApplications = totalApplications
-        self.page = page; self.curve = curve; self.days = days; self.events = events; self.coverage = coverage
+        self.page = page; self.curve = curve; self.days = days; self.events = events; self.coverage = coverage; self.contract = contract
+    }
+    public func satisfies(_ request: HistoryQueryRequest) -> Bool {
+        range == request.scope.range && page == request.page && (0...8_192).contains(totalApplications)
+            && contract?.accepts(request) == true
     }
 }

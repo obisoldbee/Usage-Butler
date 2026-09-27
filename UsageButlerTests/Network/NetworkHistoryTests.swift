@@ -72,6 +72,71 @@ final class HistoryMinuteTests: XCTestCase {
     }
 }
 
+private func assertHistoryExportPeaks(_ result: HistoryQueryResult, upload: Double?, download: Double?,
+                                     file: StaticString = #filePath, line: UInt = #line) throws {
+    let data = try NetworkHistoryExport.encode(result, now: result.range.end)
+    let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any], file: file, line: line)
+    let sections = [("applications", result.applications.map(\.totals)),
+                    ("curve", result.curve.map(\.totals)), ("utcDays", result.days.map(\.totals))]
+    for (section, sourceTotals) in sections {
+        let rows = try XCTUnwrap(root[section] as? [[String: Any]], file: file, line: line)
+        XCTAssertEqual(rows.count, 1, section, file: file, line: line)
+        let row = try XCTUnwrap(rows.first, file: file, line: line)
+        let totals = try XCTUnwrap(row["totals"] as? [String: Any], file: file, line: line)
+        let source = try XCTUnwrap(sourceTotals.first, file: file, line: line)
+        for (direction, expected, bytes, samples) in [("Upload", upload, source.upload, source.uploadSamples),
+                                                     ("Download", download, source.download, source.downloadSamples)] {
+            let peak = try XCTUnwrap(totals["sampledPeak\(direction)BytesPerSecond"], file: file, line: line)
+            let message = "\(section).\(direction)"
+            if let expected {
+                let number = try XCTUnwrap(peak as? NSNumber, message, file: file, line: line)
+                XCTAssertEqual(number.doubleValue.bitPattern, expected.bitPattern, message, file: file, line: line)
+            } else {
+                XCTAssertTrue(peak is NSNull, message, file: file, line: line)
+            }
+            let prefix = direction.lowercased()
+            XCTAssertEqual(totals["\(prefix)Samples"] as? String, String(samples), message, file: file, line: line)
+            if let bytes {
+                XCTAssertEqual(totals["\(prefix)Bytes"] as? String, String(bytes), message, file: file, line: line)
+            } else {
+                XCTAssertTrue(totals["\(prefix)Bytes"] is NSNull, message, file: file, line: line)
+            }
+        }
+    }
+}
+
+final class NetworkHistoryExportTests: XCTestCase {
+    private func result(_ totals: HistoryTotals) -> HistoryQueryResult {
+        let start = Date(timeIntervalSince1970: 1_699_920_000), end = start.addingTimeInterval(60)
+        return .init(range: .init(start: start, end: end),
+            applications: [.init(id: 1, identity: .init(key: "synthetic", name: "Synthetic", evidence: .executable), totals: totals)],
+            totalApplications: 1, page: 0,
+            curve: [.init(id: 0, start: start, end: end, totals: totals, segments: 1)],
+            days: [.init(day: start, totals: totals)], events: [], coverage: .init())
+    }
+    func testEachDirectionExportsUnknownZeroAndFractionalPositiveInEverySummary() throws {
+        for upload: UInt64? in [nil, 0, 1] {
+            for download: UInt64? in [nil, 0, 7] {
+                let totals = HistoryMinute(upload: upload, download: download, durationNanoseconds: 3_000_000_000,
+                    firstMillisecond: 0, lastMillisecond: 3000).totals
+                XCTAssertEqual(totals.uploadSamples, upload == nil ? 0 : 1)
+                XCTAssertEqual(totals.downloadSamples, download == nil ? 0 : 1)
+                try assertHistoryExportPeaks(result(totals), upload: upload.map { Double($0) / 3 },
+                    download: download.map { Double($0) / 3 })
+            }
+        }
+    }
+    func testObservedPeakRemainsNumericWhenByteTotalOverflows() throws {
+        var minute = HistoryMinute(upload: .max, download: 0, durationNanoseconds: 1_000_000_000,
+            firstMillisecond: 0, lastMillisecond: 1000)
+        minute.merge(.init(upload: 1, download: nil, durationNanoseconds: 1_000_000_000,
+            firstMillisecond: 1000, lastMillisecond: 2000))
+        XCTAssertNil(minute.totals.upload); XCTAssertEqual(minute.totals.uploadSamples, 2)
+        XCTAssertEqual(minute.totals.downloadSamples, 1)
+        try assertHistoryExportPeaks(result(minute.totals), upload: Double(UInt64.max), download: 0)
+    }
+}
+
 private final class HistoryTestAge: @unchecked Sendable {
     private let lock = NSLock()
     private var sample = HistoryAgeSample(boot: "history-test", continuousNanoseconds: 1_000_000_000)
@@ -85,7 +150,10 @@ private final class HistoryTestAge: @unchecked Sendable {
 final class NetworkHistoryStoreTests: XCTestCase {
     private let day: TimeInterval = 1_699_920_000 // UTC midnight, minute aligned.
     private func directory() throws -> URL {
-        let result = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        // XCTest's working directory may be /tmp. Keep generated databases in
+        // this source worktree instead of depending on a process-global path.
+        let result = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent(".build/background-history-0.5.0/test-databases/" + UUID().uuidString)
         try FileManager.default.createDirectory(at: result, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         return result
@@ -564,9 +632,344 @@ final class NetworkHistoryStoreTests: XCTestCase {
         XCTAssertEqual(apps[0]["alias"] as? String, events[0]["application"] as? String)
         XCTAssertFalse(String(decoding: export, as: UTF8.self).contains("Old name"))
         XCTAssertFalse(String(decoding: export, as: UTF8.self).contains("New name"))
-        let secondPage = try await query.query(range: range, applicationID: result.applications[0].id, page: 1)
+        let selected = try await query.query(range: range, applicationID: result.applications[0].id)
+        let secondPage = try await query.query(range: range, applicationID: result.applications[0].id, page: 1, context: selected.contract?.context)
         XCTAssertEqual(secondPage.applications[0].totals.upload, 1_200_000)
         XCTAssertTrue(secondPage.events.isEmpty)
         try await store.close()
+    }
+    func testIsolatedStoreQueryExportPreservesUnknownZeroAndPositivePeaksPerDirection() async throws {
+        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), clock: age.read)
+        var samples: [(key: String, upload: UInt64?, download: UInt64?)] = []
+        for upload: UInt64? in [nil, 0, 1] {
+            for download: UInt64? in [nil, 0, 7] {
+                samples.append(("synthetic-\(samples.count)", upload, download))
+            }
+        }
+        for sequence in 1...2 {
+            let baseline = sequence == 1
+            let applications = samples.map { sample in
+                ProcessNetworkSettlement.Application(identity: .init(key: sample.key, name: sample.key, evidence: .executable),
+                    upload: baseline ? nil : sample.upload, download: baseline ? nil : sample.download,
+                    uploadIssue: nil, downloadIssue: nil)
+            }
+            try await store.accept(.init(session: "export-peaks", sequence: UInt64(sequence),
+                start: baseline ? nil : .init(timeIntervalSince1970: day + 11),
+                end: .init(timeIntervalSince1970: day + (baseline ? 11 : 14)),
+                monotonicEnd: baseline ? 1_000_000_000 : 4_000_000_000,
+                durationNanoseconds: baseline ? 0 : 3_000_000_000, complete: true, lostFrames: 0, applications: applications))
+        }
+        try await store.flush()
+        let query = NetworkHistoryQuery(databaseURL: store.databaseURL)
+        let range = HistoryRange(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60))
+        for sample in samples {
+            let result = try await query.query(range: range, applicationKey: sample.key)
+            let totals = try XCTUnwrap(result.applications.first?.totals)
+            XCTAssertEqual(totals.upload, sample.upload); XCTAssertEqual(totals.download, sample.download)
+            XCTAssertEqual(totals.uploadSamples, sample.upload == nil ? 0 : 1)
+            XCTAssertEqual(totals.downloadSamples, sample.download == nil ? 0 : 1)
+            XCTAssertNil(result.coverage.issue)
+            try assertHistoryExportPeaks(result, upload: sample.upload.map { Double($0) / 3 },
+                download: sample.download.map { Double($0) / 3 })
+        }
+        try await store.close()
+    }
+    func testFrozenPagesContainEveryUnknownAndObservedZeroApplicationExactlyOnce() async throws {
+        let uploads: [UInt64?] = Array(repeating: nil, count: 65) + Array(repeating: 0, count: 65)
+        try await verifyFrozenPages(uploads: uploads, expectedIndices: Array(65..<130) + Array(0..<65))
+    }
+    func testFrozenPagesOrderExactPositiveBytesThenZeroThenUnknownWithStableIdentityTies() async throws {
+        let uploads: [UInt64?] = Array(repeating: nil, count: 40) + Array(repeating: 0, count: 40)
+            + Array(repeating: 17, count: 30) + Array(repeating: (1 << 53) + 1, count: 20)
+        try await verifyFrozenPages(uploads: uploads,
+            expectedIndices: Array(110..<130) + Array(80..<110) + Array(40..<80) + Array(0..<40))
+    }
+    private func verifyFrozenPages(uploads: [UInt64?], expectedIndices: [Int]) async throws {
+        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), clock: age.read)
+        func key(_ index: Int) -> String { String(format: "synthetic-%03d", index) }
+        // Insert in the opposite order to stable keys; database IDs must not
+        // determine ties, including after the representative identity changes.
+        for sequence in 1...2 {
+            let baseline = sequence == 1
+            let applications = uploads.indices.reversed().map { index in
+                ProcessNetworkSettlement.Application(identity: .init(key: key(index), name: key(index), evidence: .executable),
+                    upload: baseline ? nil : uploads[index], download: baseline ? nil : 3, uploadIssue: nil, downloadIssue: nil)
+            }
+            try await store.accept(.init(session: "frozen-sort", sequence: UInt64(sequence),
+                start: baseline ? nil : .init(timeIntervalSince1970: day + 11),
+                end: .init(timeIntervalSince1970: day + Double(sequence + 10)), monotonicEnd: UInt64(sequence) * 1_000_000_000,
+                durationNanoseconds: baseline ? 0 : 1_000_000_000, complete: true, lostFrames: 0, applications: applications))
+        }
+        try await store.accept(frame(3, at: day + 13, upload: 0, download: 0, session: "frozen-sort",
+            name: "Renamed synthetic application", key: key(125)))
+        try await store.close()
+        let query = NetworkHistoryQuery(databaseURL: store.databaseURL)
+        let range = HistoryRange(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60))
+        let expectedKeys = expectedIndices.map(key)
+        for round in 0..<20 {
+            var keys: [String] = [], context: HistoryQueryContext?
+            for page in 0..<3 {
+                let result = try await query.query(range: range, page: page, context: context)
+                context = result.contract?.context
+                XCTAssertEqual(result.totalApplications, 130); XCTAssertEqual(result.applications.count, page == 2 ? 2 : 64)
+                for row in result.applications {
+                    let index = try XCTUnwrap(Int(row.identity.key.suffix(3)))
+                    XCTAssertEqual(row.totals.upload, uploads[index]); XCTAssertEqual(row.totals.download, 3)
+                    XCTAssertEqual(row.totals.uploadSamples, uploads[index] == nil ? 0 : index == 125 ? 2 : 1)
+                    if index == 125 {
+                        XCTAssertEqual(row.identity.name, "Renamed synthetic application")
+                        XCTAssertEqual(row.identitySnapshotCount, 2)
+                    }
+                }
+                keys += result.applications.map(\.identity.key)
+            }
+            XCTAssertEqual(Set(keys).count, 130, "Round \(round): no duplicate or missing applications")
+            XCTAssertEqual(keys, expectedKeys, "Round \(round): exact direction semantics and deterministic ties")
+        }
+    }
+}
+
+
+extension NetworkHistoryStoreTests {
+    private func browsingStore(positive: Bool = true) async throws -> (UsageButlerInfrastructure.NetworkHistoryStore, UsageButlerInfrastructure.NetworkHistoryQuery, HistoryRange, HistoryTestAge) {
+        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), clock: age.read)
+        try await store.setUploadRule(.init(largeBytes: 1_048_576, sustainedSeconds: 5, sustainedBytesPerSecond: 1024))
+        for sequence in 1...2 {
+            let applications: [ProcessNetworkSettlement.Application] = (0..<65).map { index in
+                let identity = ProcessNetworkApplicationIdentity(key: String(format: "browse-%03d", index),
+                    name: index == 64 ? "Exited Needle" : "Same Name", bundleID: "example.browse.\(index)",
+                    installationPath: "/synthetic/apps/\(index)", evidence: .executable)
+                let bytes: UInt64? = sequence == 1 ? nil : positive ? UInt64(1_048_576 + (64 - index) * 1_024) : 0
+                return .init(identity: identity, upload: bytes, download: sequence == 1 ? nil : 0, uploadIssue: nil, downloadIssue: nil)
+            }
+            try await store.accept(.init(session: "browsing", sequence: UInt64(sequence),
+                start: sequence == 1 ? nil : .init(timeIntervalSince1970: day + 11),
+                end: .init(timeIntervalSince1970: day + Double(sequence + 10)),
+                monotonicEnd: UInt64(sequence) * 1_000_000_000, durationNanoseconds: sequence == 1 ? 0 : 1_000_000_000,
+                complete: true, lostFrames: 0, applications: applications))
+        }
+        try await store.flush()
+        return (store, NetworkHistoryQuery(databaseURL: store.databaseURL),
+            .init(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60)), age)
+    }
+    private func expectChanged(_ query: UsageButlerInfrastructure.NetworkHistoryQuery, range: HistoryRange, context: HistoryQueryContext?, kind: String? = nil,
+                               file: StaticString = #filePath, line: UInt = #line) async {
+        do { _ = try await query.query(range: range, page: 1, eventKind: kind, context: context); XCTFail("must invalidate, never mix pages", file: file, line: line) }
+        catch { XCTAssertEqual(error as? HistoryQueryFailure, .changed, file: file, line: line) }
+    }
+    func testApplicationRankMoveInvalidatesBeforeReturningNextPage() async throws {
+        let (store, query, range, _) = try await browsingStore()
+        let first = try await query.query(range: range, eventKind: "sustained")
+        XCTAssertEqual(first.applications.count, 64); XCTAssertEqual(first.contract?.totalEvents, 0)
+        try await store.accept(frame(3, at: day + 13, upload: 2_097_152, session: "browsing", name: "Exited Needle", key: "browse-064")); try await store.flush()
+        await expectChanged(query, range: range, context: first.contract?.context, kind: "sustained")
+        let fresh = try await query.query(range: range, eventKind: "sustained")
+        let tail = try await query.query(range: range, page: 1, eventKind: "sustained", context: fresh.contract?.context)
+        let keys = (fresh.applications + tail.applications).map(\.identity.key)
+        XCTAssertEqual(keys.first, "browse-064"); XCTAssertEqual(keys.count, 65); XCTAssertEqual(Set(keys).count, 65)
+        XCTAssertNotEqual(fresh.contract?.context.id, first.contract?.context.id)
+        try await store.close()
+    }
+    func testOngoingActivityLastMoveInvalidatesWithoutChangingApplicationOrderOrEventMembership() async throws {
+        let (store, query, range, _) = try await browsingStore()
+        let first = try await query.query(range: range)
+        let tail = try await query.query(range: range, page: 1, context: first.contract?.context)
+        let event = try XCTUnwrap(tail.events.first)
+        try await store.accept(frame(3, at: day + 13, upload: 1, session: "browsing", name: event.name, key: event.applicationKey)); try await store.flush()
+        await expectChanged(query, range: range, context: first.contract?.context)
+        let fresh = try await query.query(range: range)
+        let newTail = try await query.query(range: range, page: 1, context: fresh.contract?.context)
+        XCTAssertEqual((fresh.applications + newTail.applications).map(\.identity.key), (first.applications + tail.applications).map(\.identity.key))
+        XCTAssertEqual(Set((fresh.events + newTail.events).map(\.id)), Set((first.events + tail.events).map(\.id)))
+        XCTAssertEqual(fresh.events.first?.id, event.id)
+        XCTAssertGreaterThan(try XCTUnwrap(fresh.events.first?.end), event.end)
+        try await store.close()
+    }
+    func testNewEventAndRetentionDeletionInvalidateExistingContext() async throws {
+        for deletion in [false, true] {
+            let (store, query, range, age) = try await browsingStore()
+            let first = try await query.query(range: range)
+            if deletion {
+                age.set(15 * 86_400)
+                try await store.accept(frame(1, at: day + 15 * 86_400 + 1, upload: 1, session: "retention-new", key: "outside"))
+            } else {
+                try await store.accept(frame(3, at: day + 13, upload: 0, session: "browsing", key: "browse-000"))
+                try await store.accept(frame(4, at: day + 14, upload: 1_048_576, session: "browsing", key: "browse-000"))
+            }
+            try await store.flush()
+            await expectChanged(query, range: range, context: first.contract?.context)
+            let fresh = try await query.query(range: range)
+            XCTAssertEqual(fresh.contract?.totalEvents, deletion ? 0 : 66)
+            XCTAssertEqual(fresh.totalApplications, deletion ? 0 : 65)
+            try await store.close()
+        }
+    }
+    func testRepresentativeValueAndUnrelatedWritesDoNotInvalidateStableMembers() async throws {
+        let (store, query, range, _) = try await browsingStore()
+        let first = try await query.query(range: range)
+        let initialTail = try await query.query(range: range, page: 1, context: first.contract?.context)
+        let oldID = try XCTUnwrap(initialTail.applications.first?.id)
+        // New representative and observed zero do not change app/event members or ordering.
+        try await store.accept(frame(3, at: day + 13, upload: 0, session: "browsing", name: "Renamed Needle", key: "browse-064")); try await store.flush()
+        let renamed = try await query.query(range: range, page: 1, context: first.contract?.context)
+        XCTAssertEqual(renamed.contract?.context, first.contract?.context)
+        XCTAssertEqual(renamed.applications.first?.identity.name, "Renamed Needle"); XCTAssertNotEqual(renamed.applications.first?.id, oldID)
+        // A committed write outside the absolute range is not a global invalidation counter.
+        try await store.accept(frame(4, at: day + 121, upload: 3, session: "browsing", key: "unrelated")); try await store.flush()
+        let unrelated = try await query.query(range: range, page: 1, context: first.contract?.context)
+        XCTAssertEqual(unrelated.contract?.context, first.contract?.context)
+        XCTAssertEqual(unrelated.totalApplications, 65); XCTAssertEqual(unrelated.contract?.totalEvents, 65)
+        try await store.close()
+    }
+    func testContextExpiryRestartScopeBindingAndReadOnlyReopen() async throws {
+        let (store, _, range, _) = try await browsingStore(positive: false)
+        let clock = HistoryTestAge(), query = NetworkHistoryQuery(databaseURL: store.databaseURL, now: { clock.read().continuousNanoseconds })
+        let first = try await query.query(range: range); let context = try XCTUnwrap(first.contract?.context)
+        XCTAssertLessThan(try JSONEncoder().encode(context).count, 512)
+        try await store.close()
+        // Closed writer: the same executor can still validate and read another page.
+        let tail = try await query.query(range: range, page: 1, context: context)
+        XCTAssertEqual(tail.applications.count, 1)
+        for request in [HistoryQueryRequest(range: range, page: 1, eventKind: "large", context: context),
+                        .init(range: range, page: 1, search: "Needle", context: context),
+                        .init(range: range, applicationKey: "browse-064", page: 1, context: context)] {
+            do { _ = try await query.query(request); XCTFail("scope cannot reuse prior context") }
+            catch { XCTAssertEqual(error as? HistoryQueryFailure, .changed) }
+        }
+        clock.set(602)
+        do { _ = try await query.query(range: range, page: 1, context: context); XCTFail("expired") }
+        catch { XCTAssertEqual(error as? HistoryQueryFailure, .expired) }
+        let restarted = NetworkHistoryQuery(databaseURL: store.databaseURL)
+        do { _ = try await restarted.query(range: range, page: 1, context: context); XCTFail("executor generation") }
+        catch { XCTAssertEqual(error as? HistoryQueryFailure, .expired) }
+        let refreshed = try await restarted.query(range: range)
+        XCTAssertEqual(refreshed.totalApplications, 65); XCTAssertNotEqual(refreshed.contract?.context.id, context.id)
+    }
+    func testSearchAcrossAllPagesAndStableKeyDetailWithPrivateExportScope() async throws {
+        let (store, query, range, _) = try await browsingStore()
+        try await store.close() // no running processes/source: these are historical apps
+        let first = try await query.query(range: range)
+        XCTAssertFalse(first.applications.contains { $0.identity.key == "browse-064" })
+        for search in ["nEeDlE", "example.browse.64", "/synthetic/apps/64"] {
+            let found = try await query.query(range: range, search: search)
+            XCTAssertEqual(found.applications.map(\.identity.key), ["browse-064"])
+            XCTAssertTrue(found.events.allSatisfy { $0.applicationKey == "browse-064" })
+        }
+        let sameNames = try await query.query(range: range, search: "Same Name")
+        let event = try XCTUnwrap(sameNames.events.first)
+        let detail = try await query.query(range: range, applicationKey: event.applicationKey, eventKind: "large", search: "Same Name")
+        XCTAssertEqual(detail.applications.map(\.identity.key), [event.applicationKey])
+        XCTAssertTrue(detail.events.allSatisfy { $0.applicationKey == event.applicationKey })
+        let data = try NetworkHistoryExport.encode(detail), text = String(decoding: data, as: UTF8.self)
+        for privateText in ["Same Name", "browse-", "/synthetic/", "example.browse"] { XCTAssertFalse(text.contains(privateText)) }
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let scope = try XCTUnwrap(root["queryScope"] as? [String: Any])
+        XCTAssertEqual(scope["searchApplied"] as? Bool, true); XCTAssertEqual(scope["eventType"] as? String, "large")
+        XCTAssertEqual(scope["applicationSelection"] as? String, "selected")
+        XCTAssertEqual(scope["selectedApplicationAlias"] as? String, "app-1")
+        XCTAssertEqual(scope["totalEvents"] as? Int, detail.contract?.totalEvents)
+        XCTAssertTrue((scope["utcDays"] as? String)?.contains("independent of page and event type") == true)
+        XCTAssertEqual(root["schemaVersion"] as? Int, 2)
+        let missing = try await query.query(range: range, search: "No Such Application")
+        XCTAssertEqual(missing.totalApplications, 0); XCTAssertEqual(missing.contract?.scope.search, "No Such Application")
+        let cleared = try await query.query(range: range)
+        XCTAssertEqual(cleared.range, range); XCTAssertEqual(cleared.totalApplications, 65)
+    }
+    func testTwoApplicationsWith65EventsAnd65ApplicationsWithNoEventsPageFilterAndExport() async throws {
+        let store = try NetworkHistoryStore(directory: directory())
+        try await store.setUploadRule(.init(largeBytes: 1_048_576, sustainedSeconds: 5, sustainedBytesPerSecond: 1024))
+        for sequence in 1...130 {
+            try await store.accept(frame(UInt64(sequence), at: day + Double(sequence), upload: sequence.isMultiple(of: 2) ? 0 : 1_048_576,
+                key: sequence <= 128 ? "first" : "second"))
+        }
+        try await store.close()
+        let query = NetworkHistoryQuery(databaseURL: store.databaseURL)
+        let range = HistoryRange(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 180))
+        let first = try await query.query(range: range)
+        XCTAssertEqual(first.totalApplications, 2); XCTAssertEqual(first.contract?.totalEvents, 65)
+        let second = try await query.query(range: range, page: 1, context: first.contract?.context)
+        XCTAssertEqual(second.totalApplications, 2); XCTAssertTrue(second.applications.isEmpty); XCTAssertEqual(second.events.count, 1)
+        let back = try await query.query(range: range, context: first.contract?.context)
+        XCTAssertEqual(back.applications, first.applications); XCTAssertEqual(back.events, first.events)
+        let filtered = try await query.query(range: range, eventKind: "sustained")
+        XCTAssertEqual(filtered.totalApplications, 2); XCTAssertEqual(filtered.contract?.totalEvents, 0)
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: NetworkHistoryExport.encode(second)) as? [String: Any])
+        let scope = try XCTUnwrap(root["queryScope"] as? [String: Any])
+        XCTAssertEqual(scope["returnedApplications"] as? Int, 0); XCTAssertEqual(scope["returnedEvents"] as? Int, 1)
+        XCTAssertEqual(scope["totalEvents"] as? Int, 65); XCTAssertEqual(root["totalApplications"] as? Int, 2)
+        XCTAssertFalse(second.days.isEmpty)
+        let (noEventsStore, noEventsQuery, noEventsRange, _) = try await browsingStore(positive: false)
+        try await noEventsStore.close()
+        let page0 = try await noEventsQuery.query(range: noEventsRange)
+        let page1 = try await noEventsQuery.query(range: noEventsRange, page: 1, context: page0.contract?.context)
+        XCTAssertEqual(page1.totalApplications, 65); XCTAssertEqual(page1.applications.count, 1)
+        XCTAssertEqual(page1.contract?.totalEvents, 0); XCTAssertTrue(page1.events.isEmpty)
+    }
+}
+
+
+private final class EngineQueryGate: @unchecked Sendable {
+    let entered: XCTestExpectation
+    private let condition = NSCondition()
+    private var released = false
+    init(_ entered: XCTestExpectation) { self.entered = entered }
+    func read() -> UInt64 {
+        condition.lock(); defer { condition.unlock() }
+        if !released { entered.fulfill() }
+        while !released { condition.wait() }
+        return 1_000_000_000
+    }
+    func release() { condition.lock(); released = true; condition.broadcast(); condition.unlock() }
+}
+private final class EngineQuerySource: ProcessNetworkSource, @unchecked Sendable {
+    let id: CaptureSessionID
+    let pair = AsyncStream<ProcessNetworkFrame>.makeStream()
+    private let lock = NSLock(); private var stops = 0
+    init(_ id: CaptureSessionID) { self.id = id }
+    func events() -> AsyncStream<ProcessNetworkFrame> { pair.stream }
+    private func stopped() { lock.lock(); stops += 1; lock.unlock() }
+    var stopCount: Int { lock.lock(); defer { lock.unlock() }; return stops }
+    func stop() async { stopped(); pair.continuation.finish() }
+    func emit() {
+        pair.continuation.yield(.init(envelope: .init(sessionID: id, sequence: 1,
+            occurredAt: Date(timeIntervalSince1970: 1_699_920_030), monotonicOccurredAt: .init(nanoseconds: 1_000_000_000)),
+            processes: [], complete: true))
+    }
+}
+private final class EngineQuerySourceFactory: @unchecked Sendable {
+    private let lock = NSLock(); private var values: [EngineQuerySource] = []
+    var sources: [EngineQuerySource] { lock.lock(); defer { lock.unlock() }; return values }
+    func make(_ id: CaptureSessionID) -> EngineQuerySource {
+        lock.lock(); defer { lock.unlock() }; let source = EngineQuerySource(id); values.append(source); return source
+    }
+}
+
+extension NetworkHistoryStoreTests {
+    func testActualEngineBusyQueryDoesNotBlockStatusOrCollectorAndNextSearchSucceeds() async throws {
+        let (store, _, range, _) = try await browsingStore(positive: false)
+        let gate = EngineQueryGate(expectation(description: "query executor entered")), factory = EngineQuerySourceFactory()
+        defer { gate.release() }
+        let settled = expectation(description: "source settled while query running")
+        let collector = ProcessNetworkCollector(settle: { try await store.accept($0); settled.fulfill() }, makeSource: { factory.make($0) })
+        let query = UsageButlerInfrastructure.NetworkHistoryQuery(databaseURL: store.databaseURL, now: gate.read)
+        let engine = BackgroundNetworkEngine(store: store, collector: collector, query: query, executableSHA256: "synthetic")
+        let enabled = await engine.handle(.init(.enable)); XCTAssertNil(enabled.error)
+        var first = BackgroundNetworkRequest(.query); first.range = range
+        let running = Task { await engine.handle(first) }
+        await fulfillment(of: [gate.entered], timeout: 2)
+        var latest = BackgroundNetworkRequest(.query); latest.range = range; latest.search = "Needle"
+        let busy = await engine.handle(latest); XCTAssertEqual(busy.error, "history.query-busy")
+        let statusWhileBusy = await engine.handle(.init(.status)); XCTAssertNotNil(statusWhileBusy.status); XCTAssertNil(statusWhileBusy.error)
+        let source = try XCTUnwrap(factory.sources.first); source.emit()
+        await fulfillment(of: [settled], timeout: 2); try await store.flush()
+        let sampling = await engine.handle(.init(.snapshot))
+        XCTAssertEqual(sampling.snapshot?.sequence, 1); XCTAssertEqual(sampling.snapshot?.state, .active)
+        XCTAssertEqual(factory.sources.count, 1); XCTAssertEqual(source.stopCount, 0)
+        gate.release(); let completed = await running.value
+        XCTAssertNil(completed.error); XCTAssertEqual(completed.history?.totalApplications, 65)
+        let recovered = await engine.handle(latest)
+        XCTAssertNil(recovered.error); XCTAssertEqual(recovered.history?.applications.map(\.identity.key), ["browse-064"])
+        XCTAssertEqual(factory.sources.count, 1); XCTAssertEqual(source.stopCount, 0)
+        await engine.shutdown(disable: false)
     }
 }

@@ -49,6 +49,8 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 
 0.5.3（14）减少接口趋势在两小时到期清理时的额外数组复制；仍保留每接口最多7200点、两小时期限和已发布快照的不可变性。数组实际点数、预留容量与进程内存占用分别验证，合成滚动实验不代表24小时整机或完整GUI无泄漏。验证方法见[内存整改](docs/network-memory-regression.md)。
 
+0.5.4（16）候选实现保留上传规则的小数精度，修复稳定排序、未知峰值及详情返回；历史搜索覆盖整个所选范围，上传活动按稳定身份进入详情。跨页查询若成员或次序变化会明确要求刷新，旧后台不支持新合同则提示更新或重连。首帧前状态独立保存，局部空页与搜索无匹配分别说明；导出补充脱敏作用域。实现合同和验证边界见[应用网络观察合同](docs/network-panel-and-app-observation.md)。build 16 递增包版本并补充[后台升级流程](docs/background-service-upgrades.md)，不改变 build 15 的产品逻辑；正式后台恢复仍需安装后的独立验收。
+
 ## 界面预览
 
 ### 订阅额度
@@ -107,7 +109,7 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 
 `UsageButler.xcodeproj` 是生成产物，不纳入版本控制。
 
-构建启动脚本会先签内嵌后台程序，再签主应用并严格验证。默认使用本地ad-hoc签名；可用 `USAGE_BUTLER_CODESIGN_IDENTITY` 指定本机现有开发签名身份。后台跨构建升级需验证标准SM注销/注册、稳定签名标识和原历史读回；开发签名不代表Developer ID分发或公证。详见[后台与历史合同](docs/network-panel-and-app-observation.md)。
+构建启动脚本用于 Debug 开发，会先签内嵌后台程序，再签主应用并严格验证。默认使用本地ad-hoc签名；可用 `USAGE_BUTLER_CODESIGN_IDENTITY` 指定本机现有开发签名身份。正式后台升级必须沿用工作安装的身份，任何已尝试正式注册的包发生签名或打包返修都要递增 build；先验证候选，再经生产路径完成异步注销，最后替换整个包。具体门槛与恢复顺序见[后台升级流程](docs/background-service-upgrades.md)。开发签名不代表Developer ID分发或公证。
 
 ## 隐私与本地数据
 
@@ -135,7 +137,7 @@ defaults delete io.github.obisoldbee.UsageButler \
 
 ## 发布状态
 
-当前版本是开发预览版。仓库暂不提供可下载的 Release 二进制；本地脚本生成的是未签名、未经过 Apple 公证的开发构建，不应视为正式分发包。
+当前版本是开发预览版。仓库暂不提供可下载的 Release 二进制；本地脚本生成的是本地签名、未经过 Apple 公证的开发构建，不应视为正式分发包。
 
 ## 许可证
 

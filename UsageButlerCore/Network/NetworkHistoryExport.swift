@@ -14,10 +14,13 @@ public enum NetworkHistoryExport {
              "uploadObservedMicroseconds": String(value.uploadObservedMicroseconds),
              "downloadObservedMicroseconds": String(value.downloadObservedMicroseconds),
              "uploadSamples": String(value.uploadSamples), "downloadSamples": String(value.downloadSamples),
-             "sampledPeakUploadBytesPerSecond": value.peakUpload, "sampledPeakDownloadBytesPerSecond": value.peakDownload,
+             "sampledPeakUploadBytesPerSecond": value.uploadSamples > 0 ? value.peakUpload : (none as Any),
+             "sampledPeakDownloadBytesPerSecond": value.downloadSamples > 0 ? value.peakDownload : (none as Any),
              "qualityFlags": value.quality.rawValue]
         }
-        let ids = Set(result.applications.map(\.identity.key) + result.events.map(\.applicationKey)).sorted()
+        let scope = result.contract?.scope
+        let selectedKey = scope?.applicationKey ?? (scope?.applicationID == nil ? nil : result.applications.first?.identity.key)
+        let ids = Set(result.applications.map(\.identity.key) + result.events.map(\.applicationKey) + [selectedKey].compactMap { $0 }).sorted()
         let aliases = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($0.element, "app-\($0.offset + 1)") })
         let coverage = result.coverage
         let root: [String: Any] = [
@@ -26,6 +29,20 @@ public enum NetworkHistoryExport {
             "granularity": "minute aggregates; curve buckets may combine minutes; no proration",
             "privacy": "local aliases; not anonymous; no names, paths, PID, bundle IDs or targets",
             "page": result.page, "pageSize": 64, "totalApplications": result.totalApplications,
+            "queryScope": [
+                "contractVersion": result.contract.map { $0.version as Any } ?? none,
+                "contextID": result.contract.map { $0.context.id as Any } ?? none,
+                "applicationSelection": scope == nil ? "unknown" : (scope?.applicationKey != nil || scope?.applicationID != nil ? "selected" : "all matching"),
+                "selectedApplicationAlias": selectedKey.flatMap { aliases[$0] }.map { $0 as Any } ?? none,
+                "eventType": scope.map { ($0.eventKind ?? "all") as Any } ?? none,
+                "searchApplied": scope.map { !$0.search.isEmpty as Any } ?? none,
+                "applicationRows": selectedKey == nil ? "current page of matched applications" : "selected application summary",
+                "eventRows": "current page of matching overlapping events",
+                "returnedApplications": result.applications.count, "returnedEvents": result.events.count,
+                "totalEvents": result.contract.map { $0.totalEvents as Any } ?? none,
+                "utcDays": "entire selected range and matched applications, independent of page and event type",
+                "sourceCoverage": "all source samples in selected range, independent of application/search/event filters"
+            ] as [String: Any],
             "applications": result.applications.map { ["alias": aliases[$0.identity.key]!, "identitySnapshotCount": $0.identitySnapshotCount, "identityOrder": $0.identityOrder.rawValue, "totals": totals($0.totals)] as [String: Any] },
             "curve": result.curve.map { ["start": date($0.start), "endExclusive": date($0.end), "segments": $0.segments, "totals": totals($0.totals)] as [String: Any] },
             "utcDays": result.days.map { ["day": date($0.day), "totals": totals($0.totals)] },

@@ -135,12 +135,6 @@ private struct ProcessNetworkSourceStatus: View {
             .accessibilityIdentifier("settings.network.processSource")
     }
     private var title: String {
-        switch model.snapshot?.state ?? .stopped {
-        case .stopped: "已停止"
-        case .starting: "正在建立基线"
-        case .active: "正在采集系统可见进程"
-        case .partial: "部分读数不可用"
-        case .unavailable: "暂不可用（接口来源独立）"
-        }
+        model.observationTitle
     }
 }

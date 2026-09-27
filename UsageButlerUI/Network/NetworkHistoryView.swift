@@ -9,8 +9,13 @@ public struct NetworkHistoryWindowRootView: View {
     @ObservedObject private var model: BackgroundNetworkViewModel
     public init(model: BackgroundNetworkViewModel) { self.model = model }
     public var body: some View {
-        ScrollView { NetworkHistoryView(model: model).padding(22).frame(maxWidth: 1100) }
-            .frame(minWidth: 560, minHeight: 420)
+        ScrollViewReader { proxy in
+            ScrollView { NetworkHistoryView(model: model).padding(22).frame(maxWidth: 1100) }
+                .frame(minWidth: 560, minHeight: 420)
+                .onChange(of: model.returnFocus) { target in
+                    if let target { proxy.scrollTo(target, anchor: target == .summary ? .top : .center) }
+                }
+        }
     }
 }
 
@@ -20,25 +25,40 @@ struct NetworkHistoryView: View {
     @State private var showingPreview = false
     @State private var saving = false
     @State private var exportError: String?
+    @FocusState private var focused: BackgroundNetworkViewModel.ReturnFocus?
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 if model.selectedApplication != nil {
                     Button("应用汇总") { model.selectedApplication = nil }
+                        .accessibilityIdentifier("network.history.back")
                 }
                 Text(model.result?.applications.first.flatMap { model.selectedApplication == nil ? nil : $0.identity.name } ?? "应用历史")
                     .font(.headline).lineLimit(1)
                 Spacer()
                 Button("刷新") { model.reload() }.disabled(model.loading)
+                    .focusable(true)
+                    .focused($focused, equals: .summary)
+                    .accessibilityIdentifier("network.history.refresh")
                 Button("导出预览") { prepareExport() }.disabled(model.result == nil)
                     .accessibilityIdentifier("network.history.export")
-            }
+            }.id(BackgroundNetworkViewModel.ReturnFocus.summary)
             Picker("历史范围", selection: $model.range) {
                 ForEach(BackgroundNetworkViewModel.Range.allCases) { Text($0.title).tag($0) }
             }.pickerStyle(.segmented).accessibilityIdentifier("network.history.range")
+            HStack {
+                TextField("搜索历史应用名称、标识或路径", text: $model.search)
+                    .textFieldStyle(.roundedBorder).accessibilityIdentifier("network.history.search")
+                if !model.search.isEmpty {
+                    Button("清除") { model.search = "" }.accessibilityIdentifier("network.history.search.clear")
+                }
+            }
+            Text("搜索整个所选范围，包含已退出应用及保留的身份名称。")
+                .font(.caption2).foregroundStyle(.secondary)
             Text(model.serviceTitle).font(.caption).foregroundStyle(.secondary)
             if model.loading { ProgressView("读取已提交历史…").controlSize(.small) }
             if let issue = model.queryIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
+            if let notice = model.navigationNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
             if let result = model.result {
                 Text("\(result.range.start.formatted(date: .abbreviated, time: .shortened)) — \(result.range.end.formatted(date: .abbreviated, time: .shortened)) · 整分钟范围")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -52,11 +72,11 @@ struct NetworkHistoryView: View {
                              ? "所选范围含 \(app.identitySnapshotCount) 份身份快照；显示最近观察到的名称。"
                              : "所选范围含 \(app.identitySnapshotCount) 份旧身份快照；观察顺序未记录，显示名称不代表最近身份。")
                             .font(.caption2).foregroundStyle(.secondary)
-                    }
+                    } else { Text(emptyText(result)).font(.callout).foregroundStyle(.secondary) }
                 } else {
                     Text("按已观察上传排序").font(.caption).foregroundStyle(.secondary)
                     ForEach(result.applications) { app in
-                        Button { model.selectedApplication = app.id } label: {
+                        Button { model.openApplication(app) } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(app.identity.name).lineLimit(1)
@@ -69,6 +89,10 @@ struct NetworkHistoryView: View {
                                 Text("↓ \(NetworkPresentation.bytes(app.totals.download))").foregroundStyle(NetworkPresentation.downloadColor)
                             }.font(.caption).monospacedDigit().padding(.vertical, 5).contentShape(Rectangle())
                         }.buttonStyle(.plain)
+                            .id(BackgroundNetworkViewModel.ReturnFocus.application(app.id))
+                            .focusable(true).focused($focused, equals: .application(app.id))
+                            .accessibilityIdentifier("network.history.row.\(app.id)")
+                            .onAppear { restoreFocus(for: .application(app.id)) }
                     }
                     if result.applications.isEmpty { Text(emptyText(result)).font(.callout).foregroundStyle(.secondary).padding(.vertical, 18) }
                 }
@@ -94,15 +118,22 @@ struct NetworkHistoryView: View {
                 Text("本地筛选记录，不判断恶意、打包或前台状态。跨范围的活动显示整段字节，可能超过该范围内用量。")
                     .font(.caption2).foregroundStyle(.secondary)
                 ForEach(result.events) { event in
+                    Button { model.openEvent(event) } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(event.name) · \(event.kind == "large" ? "大量上传" : "持续上传")").font(.caption.weight(.medium))
                         Text("\(event.start.formatted(date: .abbreviated, time: .standard)) — \(event.end.formatted(date: .abbreviated, time: .standard))")
                         Text("整段观察 ↑ \(NetworkPresentation.bytes(event.bytes)) · 峰值 \(NetworkPresentation.rate(event.peak)) · \(Int(event.observedSeconds)) 秒")
                         Text(event.kind == "large" ? "当时阈值：连续段 ≥ \(NetworkPresentation.bytes(event.rule.largeBytes))" :
-                            "当时阈值：连续 ≥ \(Int(event.rule.sustainedSeconds)) 秒，每次读数 ≥ \(NetworkPresentation.rate(event.rule.sustainedBytesPerSecond))")
+                            HistoryUploadRuleFields.sustainedThreshold(event.rule))
                         if let reason = event.endReason { Text("分段原因：\(reason)") }
                     }.font(.caption2).foregroundStyle(.secondary).padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading).background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
+                    }.buttonStyle(.plain).disabled(model.selectedApplication != nil)
+                        .id(BackgroundNetworkViewModel.ReturnFocus.event(event.id))
+                        .focusable(model.selectedApplication == nil).focused($focused, equals: .event(event.id))
+                        .accessibilityIdentifier("network.history.event.\(event.id)")
+                        .accessibilityHint("查看此活动所属应用的历史")
+                        .onAppear { restoreFocus(for: .event(event.id)) }
                 }
                 if result.events.isEmpty { Text("此页没有符合采集时阈值的上传活动；不代表没有上传或未采时段没有流量。").font(.caption).foregroundStyle(.secondary) }
                 HStack {
@@ -110,15 +141,37 @@ struct NetworkHistoryView: View {
                     Text("第 \(model.page + 1) 页 · 每页最多 64 条").font(.caption2)
                     Spacer()
                     Button("下一页") { model.nextPage() }
-                        .disabled(model.loading || model.page >= 1023 || ((model.page + 1) * 64 >= result.totalApplications && result.events.count < 64))
+                        .disabled(model.loading || model.page >= 1023 || (model.page + 1) * 64 >= max(result.totalApplications, result.contract?.totalEvents ?? 0))
+                }
+            }
+        }
+        .background {
+            if model.selectedApplication == nil {
+                ProcessListKeyboard { key in
+                    guard [UInt16(36), 49, 76].contains(key), !showingPreview, !saving, exportError == nil else { return false }
+                    switch focused {
+                    case let .application(id):
+                        guard let app = model.result?.applications.first(where: { $0.id == id }) else { return false }
+                        model.openApplication(app); return true
+                    case let .event(id):
+                        guard let event = model.result?.events.first(where: { $0.id == id }) else { return false }
+                        model.openEvent(event); return true
+                    case .summary:
+                        guard !model.loading else { return false }
+                        model.reload(); return true
+                    default: return false
+                    }
                 }
             }
         }
         .onAppear { if model.result == nil { model.reload() } }
+        .onChange(of: model.returnFocus) { target in
+            if let target { restoreFocus(for: target) }
+        }
         .sheet(isPresented: $showingPreview) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("历史 JSON 导出预览").font(.headline)
-                Text("冻结当前范围与当前页，默认使用别名；不含名称、路径、PID 或目标。别名化不等于匿名。").font(.caption)
+                Text("冻结当前范围、应用选择、活动筛选、搜索生效状态及当前页；日汇总覆盖整个匹配范围，不随页码或活动类型缩小。默认别名化，不含搜索原文、名称、路径、PID 或目标；别名化不等于匿名。").font(.caption)
                 ScrollView { Text(preview?.text ?? "").font(.system(.caption2, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                 HStack {
                     Button("取消") { showingPreview = false; preview = nil }.keyboardShortcut(.cancelAction)
@@ -136,6 +189,14 @@ struct NetworkHistoryView: View {
             Button("好") { exportError = nil }
         } message: { Text(exportError ?? "") }
     }
+    private func restoreFocus(for target: BackgroundNetworkViewModel.ReturnFocus) {
+        guard model.returnFocus == target else { return }
+        // Wait for the restored row to attach, and recheck navigation so a
+        // delayed attachment cannot steal focus after another user action.
+        DispatchQueue.main.async {
+            if model.selectedApplication == nil, model.returnFocus == target { focused = target }
+        }
+    }
     @ViewBuilder private func coverage(_ result: HistoryQueryResult) -> some View {
         let c = result.coverage
         VStack(alignment: .leading, spacing: 4) {
@@ -150,6 +211,8 @@ struct NetworkHistoryView: View {
         }.font(.caption2).foregroundStyle(.secondary)
     }
     private func emptyText(_ result: HistoryQueryResult) -> String {
+        if result.totalApplications > 0 { return "本页已无更多应用；范围内共有 \(result.totalApplications) 个应用，可继续查看下方活动或返回上一页。" }
+        if result.contract?.scope.search.isEmpty == false { return "没有符合搜索的应用，可清除搜索后查看此范围的历史。" }
         if let first = result.coverage.firstCollectedAt, result.range.end <= first { return "此范围早于开始采集时间，无法补回过去流量。" }
         if result.coverage.retentionTrimmed, let oldest = result.coverage.oldestRetainedAt, result.range.end <= oldest { return "此范围的记录已超出保留期限。" }
         if result.coverage.unattributedSamples > 0 { return "此范围有源采样，但没有可归属应用的历史。" }

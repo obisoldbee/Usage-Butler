@@ -115,12 +115,13 @@ struct ProcessNetworkApplicationsView: View {
         }
     }
     @ViewBuilder private var status: some View {
-        let state = model.snapshot?.state ?? .stopped
-        if state != .active {
-            Text(state == .stopped ? "应用采集已停止 · 可在设置 → 网络中开启" :
-                state == .starting ? "正在建立应用采样基线…" :
-                state == .partial ? "应用采样不完整 · 当前速率未知" : "应用来源暂不可用 · 接口统计独立运行")
+        if model.currentState != .active {
+            Text(model.observationTitle)
                 .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("network.apps.status")
+            if let sampledAt = model.snapshot?.sampledAt {
+                Text("保留的上次采样：\(sampledAt.formatted(date: .abbreviated, time: .standard)) · 不代表当前速率")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
         if model.snapshot?.truncated == true {
             Text("历史受资源预算限制，部分早期样本或应用未保留。")
@@ -215,7 +216,7 @@ struct ProcessNetworkApplicationsView: View {
         }
     }
     private func prepareExport(detail: String?) {
-        guard let snapshot = model.snapshot else { return }
+        guard let snapshot = model.snapshotForExport else { return }
         do {
             let data = try ProcessNetworkExport.encode(snapshot: snapshot,
                 keys: detail.map { [$0] } ?? model.rows.map { $0.identity.key }, now: now,
@@ -228,7 +229,7 @@ struct ProcessNetworkApplicationsView: View {
 /// Activation for the explicitly focused row, including when macOS keyboard
 /// navigation is disabled. Never consumes a key from the search field or a
 /// different window, and detaches with the list.
-private struct ProcessListKeyboard: NSViewRepresentable {
+struct ProcessListKeyboard: NSViewRepresentable {
     var onKey: (UInt16) -> Bool
     func makeNSView(context: Context) -> KeyView {
         let view = KeyView()

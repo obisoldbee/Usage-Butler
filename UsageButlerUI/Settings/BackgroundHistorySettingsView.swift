@@ -3,9 +3,7 @@ import UsageButlerDomain
 
 struct BackgroundHistorySettingsView: View {
     @ObservedObject var model: BackgroundNetworkViewModel
-    @State private var largeMiB = "100"
-    @State private var sustainedSeconds = "60"
-    @State private var sustainedKiB = "100"
+    @State private var ruleFields = HistoryUploadRuleFields(.init())
     @State private var ruleMessage: String?
     @State private var savingRule = false
     var body: some View {
@@ -32,10 +30,10 @@ struct BackgroundHistorySettingsView: View {
                 }
                 Divider()
                 Text("本地上传活动筛选").font(.subheadline.weight(.semibold))
-                HStack { Text("连续上传段 ≥"); TextField("MiB", text: $largeMiB).frame(width: 100); Text("MiB") }
+                HStack { Text("连续上传段 ≥"); TextField("MiB", text: $ruleFields.largeMiB).frame(width: 100); Text("MiB") }
                 HStack {
-                    Text("持续 ≥"); TextField("秒", text: $sustainedSeconds).frame(width: 70); Text("秒，每次采样 ≥")
-                    TextField("KiB/s", text: $sustainedKiB).frame(width: 80); Text("KiB/s")
+                    Text("持续 ≥"); TextField("秒", text: $ruleFields.sustainedSeconds).frame(width: 70); Text("秒，每次采样 ≥")
+                    TextField("KiB/s", text: $ruleFields.sustainedKiB).frame(width: 80); Text("KiB/s")
                 }
                 Text("零流量或未知读数会结束连续段；持续上传还会在低于速率阈值时结束。来源重启、时间跳变和 UTC 日期边界会分段。")
                     .font(.caption2).foregroundStyle(.secondary)
@@ -65,16 +63,12 @@ struct BackgroundHistorySettingsView: View {
             .onChange(of: model.configuredRule) { _ in loadRule() }
     }
     private func loadRule() {
-        largeMiB = String(model.configuredRule.largeBytes / 1_048_576)
-        sustainedSeconds = String(Int(model.configuredRule.sustainedSeconds))
-        sustainedKiB = String(Int(model.configuredRule.sustainedBytesPerSecond / 1_024))
+        ruleFields = HistoryUploadRuleFields(model.configuredRule)
     }
     private func saveRule() {
-        guard let mib = UInt64(largeMiB), (1...1_073_741_824).contains(mib),
-              let seconds = Double(sustainedSeconds), let kib = Double(sustainedKiB) else {
+        guard let rule = ruleFields.parsedRule else {
             ruleMessage = "请输入范围内的数字。"; return
         }
-        let rule = HistoryUploadRule(largeBytes: mib * 1_048_576, sustainedSeconds: seconds, sustainedBytesPerSecond: kib * 1_024)
         guard rule.isValid, let onRule = model.onRule else { ruleMessage = "持续时间需5–86400秒，速率至少1 KiB/s。"; return }
         savingRule = true; ruleMessage = nil
         Task {
@@ -82,5 +76,34 @@ struct BackgroundHistorySettingsView: View {
             catch { ruleMessage = "已保留设置，但后台确认失败，请刷新状态后重试。" }
             savingRule = false
         }
+    }
+}
+
+/// Editable rule values need a round-trippable representation, unlike the
+/// rounded rates used for live traffic. KiB conversion is an exact binary scale.
+struct HistoryUploadRuleFields {
+    var largeMiB: String
+    var sustainedSeconds: String
+    var sustainedKiB: String
+
+    init(_ rule: HistoryUploadRule) {
+        largeMiB = String(rule.largeBytes / 1_048_576)
+        sustainedSeconds = Self.number(rule.sustainedSeconds)
+        sustainedKiB = Self.number(rule.sustainedBytesPerSecond / 1_024)
+    }
+
+    var parsedRule: HistoryUploadRule? {
+        guard let mib = UInt64(largeMiB), (1...1_073_741_824).contains(mib),
+              let seconds = Double(sustainedSeconds), let kib = Double(sustainedKiB) else { return nil }
+        return .init(largeBytes: mib * 1_048_576, sustainedSeconds: seconds, sustainedBytesPerSecond: kib * 1_024)
+    }
+
+    static func sustainedThreshold(_ rule: HistoryUploadRule) -> String {
+        "当时阈值：连续 ≥ \(number(rule.sustainedSeconds)) 秒，每次读数 ≥ \(number(rule.sustainedBytesPerSecond / 1_024)) KiB/s"
+    }
+
+    private static func number(_ value: Double) -> String {
+        let text = String(value)
+        return text.hasSuffix(".0") ? String(text.dropLast(2)) : text
     }
 }

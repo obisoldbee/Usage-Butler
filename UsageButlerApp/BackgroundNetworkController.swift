@@ -82,13 +82,13 @@ final class BackgroundNetworkController {
             guard token == revision, !disconnected else { return }
             if let status = response.status { model.status = status }
         }
-        model.onQuery = { [weak self] range, app, page, kind in
+        model.onQuery = { [weak self] request in
             guard let self else { throw BackgroundNetworkWire.Failure.disconnected }
-            return try await query(range, applicationID: app, page: page, kind: kind)
+            return try await query(request)
         }
         process.onLongHistory = { [weak self] key, seconds in
             guard let self else { throw BackgroundNetworkWire.Failure.disconnected }
-            return try await query(.recent(days: seconds / 86_400), applicationID: nil, applicationKey: key, page: 0, kind: nil)
+            return try await query(.init(range: .recent(days: seconds / 86_400), applicationKey: key))
         }
     }
     func start(initiallyEnabled: Bool) async {
@@ -106,6 +106,7 @@ final class BackgroundNetworkController {
         guard !disconnected else { return }
         revision &+= 1; let token = revision
         stopConfirmed = false
+        process.setObservationState(enabled ? .connecting : .unavailable)
         defaults.set(enabled, forKey: Self.preference); model.desired = enabled; model.changing = true
         let previous = change
         let next = Task { [weak self] in
@@ -194,6 +195,14 @@ final class BackgroundNetworkController {
         case .notFound: "notFound"
         @unknown default: "unknown"
         }
+        if model.desired {
+            switch service.status {
+            case .requiresApproval: process.setObservationState(.requiresApproval)
+            case .notFound: process.setObservationState(.notFound)
+            case .notRegistered: process.setObservationState(.unavailable)
+            default: break
+            }
+        }
     }
     private func validate(_ status: BackgroundNetworkStatus?) throws {
         if let replyValidator { try replyValidator(status); return }
@@ -208,13 +217,17 @@ final class BackgroundNetworkController {
         guard !disconnected, !model.changing else { return }
         let token = revision; readRegistration()
         if !model.desired, stopConfirmed { process.markBackgroundUnavailable(stopped: true); return }
-        guard service.status == .enabled else { process.markBackgroundUnavailable(stopped: false); return }
+        guard service.status == .enabled else {
+            if !model.desired { process.markBackgroundUnavailable(stopped: false) }
+            return
+        }
         var request = BackgroundNetworkRequest(.snapshot); request.selectedKey = process.selected
         do {
             let response = try await client.request(request)
             guard token == revision, !disconnected, !model.changing else { return }
             try validate(response.status); model.status = response.status; model.serviceIssue = nil
-            if let snapshot = response.snapshot { process.apply(snapshot) }
+            guard let snapshot = response.snapshot else { throw BackgroundNetworkWire.Failure.invalidResponse }
+            process.apply(snapshot)
         } catch {
             guard token == revision, !disconnected, !model.changing else { return }
             model.serviceIssue = Self.errorCode(error); process.markBackgroundUnavailable(stopped: false)
@@ -235,15 +248,24 @@ final class BackgroundNetworkController {
         // independent collector running with its existing durable preference.
         await client.disconnect()
     }
-    private func query(_ range: HistoryRange, applicationID: Int64?, applicationKey: String? = nil, page: Int, kind: String?) async throws -> HistoryQueryResult {
+    private func query(_ query: HistoryQueryRequest) async throws -> HistoryQueryResult {
+        guard query.isValid else { throw BackgroundNetworkWire.Failure.invalidRequest }
+        let history: HistoryQueryResult
         if service.status != .enabled {
-            return try await offlineQuery.query(range: range, applicationID: applicationID, applicationKey: applicationKey, page: page, eventKind: kind)
+            history = try await offlineQuery.query(query)
+        } else {
+            var request = BackgroundNetworkRequest(.query); request.range = query.scope.range
+            request.applicationID = query.scope.applicationID; request.selectedKey = query.scope.applicationKey
+            request.page = query.page; request.eventKind = query.scope.eventKind
+            request.search = query.scope.search; request.queryContext = query.context
+            let response = try await client.request(request)
+            guard let result = response.history else { throw HistoryQueryFailure.incompatible }
+            history = result
         }
-        var request = BackgroundNetworkRequest(.query); request.range = range; request.applicationID = applicationID
-        request.selectedKey = applicationKey
-        request.page = page; request.eventKind = kind
-        let response = try await client.request(request)
-        guard let history = response.history else { throw BackgroundNetworkWire.Failure.invalidResponse }; return history
+        // A v1 helper may ignore new JSON fields. Require the response contract
+        // even on page zero; never accept an unfiltered/unprotected fallback.
+        guard history.satisfies(query) else { throw HistoryQueryFailure.incompatible }
+        return history
     }
     private static func errorCode(_ error: Error) -> String {
         if let error = error as? NetworkHistoryError { return error.code }

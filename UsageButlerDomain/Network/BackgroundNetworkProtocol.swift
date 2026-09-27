@@ -31,14 +31,18 @@ public struct BackgroundNetworkRequest: Codable, Sendable {
     public var applicationID: Int64?
     public var page = 0
     public var eventKind: String?
+    public var search: String?
+    public var queryContext: HistoryQueryContext?
     public var rule: HistoryUploadRule?
     public init(_ operation: Operation) { self.operation = operation }
     public var isValid: Bool {
         protocolVersion == 1 && (selectedKey?.utf8.count ?? 0) <= 8_192 && (0...1023).contains(page)
             && (applicationID.map { $0 > 0 } ?? true)
             && (eventKind == nil || eventKind == "large" || eventKind == "sustained")
+            && (search?.utf8.count ?? 0) <= 256 && (queryContext?.isValid ?? true)
             && (operation != .query || range?.isValid == true)
             && (operation != .query || applicationID == nil || selectedKey == nil)
+            && (operation != .query || page == 0 || queryContext != nil)
             && (operation != .updateRule || rule?.isValid == true)
     }
 }
@@ -58,7 +62,7 @@ public struct BackgroundNetworkResponse: Codable, Sendable {
 public enum BackgroundNetworkWire {
     public static let maximumRequestBytes = 65_536
     public static let maximumResponseBytes = 4 * 1_048_576
-    public static let version = "0.5.3 (14)"
+    public static let version = "0.5.4 (16)"
     public static func encode(_ response: BackgroundNetworkResponse) throws -> Data {
         let data = try JSONEncoder().encode(response)
         guard data.count <= maximumResponseBytes else { throw Failure.responseTooLarge }

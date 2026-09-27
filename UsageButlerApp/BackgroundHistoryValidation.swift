@@ -33,7 +33,7 @@ import UsageButlerDomain
             if action == "query", let query = model.onQuery {
                 do {
                     let start = ContinuousClock.now
-                    let history = try await query(.recent(days: 14), nil, 0, nil)
+                    let history = try await query(.init(range: .recent(days: 14)))
                     result["querySeconds"] = Double(start.duration(to: .now).components.attoseconds) / 1e18 + Double(start.duration(to: .now).components.seconds)
                     result["applicationCount"] = history.totalApplications
                     result["sourceSamples"] = String(history.coverage.sourceSamples)

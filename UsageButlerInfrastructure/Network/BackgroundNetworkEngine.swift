@@ -25,15 +25,18 @@ public actor BackgroundNetworkEngine {
               let executable = try? Data(contentsOf: URL(fileURLWithPath: String(cString: path)), options: .mappedIfSafe) else {
             throw NetworkHistoryError.unsafePath
         }
-        executableSHA256 = SHA256.hash(data: executable).map { String(format: "%02x", $0) }.joined()
+        let hash = SHA256.hash(data: executable).map { String(format: "%02x", $0) }.joined()
         let store = try NetworkHistoryStore(directory: directory)
         let supervisor = NettopChildSupervisor(directory: directory)
         // The Store owns the lock before old-child recovery can signal anything.
         try supervisor.recover()
-        self.store = store; query = NetworkHistoryQuery(databaseURL: store.databaseURL)
-        collector = ProcessNetworkCollector(budget: .init(historyPerApplication: 60, totalHistory: 15_360),
+        let collector = ProcessNetworkCollector(budget: .init(historyPerApplication: 60, totalHistory: 15_360),
             record: ProcessNetworkLifecycleLog.record, settle: { try await store.accept($0) },
             makeSource: { NettopProcessSource(sessionID: $0, supervisor: supervisor, record: ProcessNetworkLifecycleLog.record) })
+        self.init(store: store, collector: collector, query: NetworkHistoryQuery(databaseURL: store.databaseURL), executableSHA256: hash)
+    }
+    init(store: NetworkHistoryStore, collector: ProcessNetworkCollector, query: NetworkHistoryQuery, executableSHA256: String) {
+        self.store = store; self.collector = collector; self.query = query; self.executableSHA256 = executableSHA256
     }
     public func start() async {
         guard !stopped else { return }
@@ -105,7 +108,7 @@ public actor BackgroundNetworkEngine {
                 guard !queryRunning, let range = request.range else { return .init(error: "history.query-busy") }
                 queryRunning = true; defer { queryRunning = false }
                 let result = try await query.query(range: range, applicationID: request.applicationID, applicationKey: request.selectedKey,
-                    page: request.page, eventKind: request.eventKind)
+                    page: request.page, eventKind: request.eventKind, search: request.search ?? "", context: request.queryContext)
                 return .init(history: result)
             case .updateRule:
                 guard let rule = request.rule else { throw NetworkHistoryError.invalidRequest }
@@ -120,6 +123,7 @@ public actor BackgroundNetworkEngine {
             case .stop:
                 await shutdown(disable: true); return .init(status: await status(), error: shutdownIssue)
             }
-        } catch { return .init(error: (error as? NetworkHistoryError)?.code ?? "history.operation-failed") }
+        } catch let error as HistoryQueryFailure { return .init(error: error.code) }
+        catch { return .init(error: (error as? NetworkHistoryError)?.code ?? "history.operation-failed") }
     }
 }

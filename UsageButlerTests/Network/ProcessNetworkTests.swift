@@ -492,3 +492,42 @@ final class ProcessNetworkTests: XCTestCase {
         model.toggleWatch("A"); XCTAssertEqual(model.rows.count, 0)
     }
 }
+
+
+extension ProcessNetworkTests {
+    @MainActor func testObservationStatePropagatesToV1ExportWithoutRewritingSampleEvidence() throws {
+        var aggregator = ProcessNetworkAggregator(sessionID: session)
+        aggregator.apply(frame(1, [row(up: 0, down: 0)]))
+        aggregator.apply(frame(2, [row(up: 4096, down: 1024)]))
+        let snapshot = aggregator.snapshot(), model = ProcessNetworkViewModel()
+        XCTAssertNil(model.snapshotForExport)
+        model.apply(snapshot)
+        func exported() throws -> [String: Any] {
+            let evidence = try XCTUnwrap(model.snapshotForExport)
+            let data = try ProcessNetworkExport.encode(snapshot: evidence, keys: ["app"], now: evidence.sampledAt!,
+                window: 60, includeHistory: true, monotonicNow: evidence.sampledMonotonic!)
+            return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        let active = try exported(), activeApps = try XCTUnwrap(active["applications"] as? [[String: Any]])
+        XCTAssertGreaterThan(try XCTUnwrap(activeApps.first?["uploadBytesPerSecond"] as? Double), 0)
+        for state in [ProcessNetworkViewModel.ObservationState.unavailable, .stopped, .requiresApproval, .notFound, .connecting] {
+            model.setObservationState(state)
+            XCTAssertEqual(model.snapshot, snapshot)
+            let result = try exported(), apps = try XCTUnwrap(result["applications"] as? [[String: Any]])
+            XCTAssertEqual(result["version"] as? Int, 1)
+            XCTAssertEqual(result["state"] as? String, state == .stopped ? "stopped" : "unavailable")
+            XCTAssertEqual(Set(result.keys), Set(active.keys), "v1 schema unchanged")
+            for field in ["sourceSampledAt", "sourceMonotonicNanoseconds", "sequence", "session"] {
+                XCTAssertEqual(result[field] as? String, active[field] as? String, field)
+            }
+            XCTAssertTrue(apps[0]["uploadBytesPerSecond"] is NSNull); XCTAssertTrue(apps[0]["downloadBytesPerSecond"] is NSNull)
+            XCTAssertEqual(apps[0]["sampledAt"] as? String, activeApps[0]["sampledAt"] as? String)
+            XCTAssertEqual(try JSONSerialization.data(withJSONObject: apps[0]["history"]!, options: [.sortedKeys]),
+                try JSONSerialization.data(withJSONObject: activeApps[0]["history"]!, options: [.sortedKeys]))
+        }
+        aggregator.apply(frame(3, [row(up: 8192, down: 2048)])); model.apply(aggregator.snapshot())
+        let recovered = try exported(), recoveredApps = try XCTUnwrap(recovered["applications"] as? [[String: Any]])
+        XCTAssertEqual(recovered["state"] as? String, "active")
+        XCTAssertGreaterThan(try XCTUnwrap(recoveredApps.first?["uploadBytesPerSecond"] as? Double), 0)
+    }
+}

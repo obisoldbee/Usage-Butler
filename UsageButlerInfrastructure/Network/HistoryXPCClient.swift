@@ -121,7 +121,8 @@ public actor HistoryXPCClient: BackgroundNetworkClient {
         let codes: Set<String> = ["history.query-busy", "history.request-busy", "history.query-timeout", "history.invalid-request",
             "history.already-running", "history.unsafe-path", "history.closed", "history.unsupported-schema", "history.corrupt",
             "history.capacity", "history.stopped", "history.unavailable", "history.operation-failed", "history.response-too-large",
-            "history.stop-persistence-failed", "history.close-unconfirmed"]
+            "history.stop-persistence-failed", "history.close-unconfirmed", "history.query-context-changed",
+            "history.query-context-expired", "history.query-contract-mismatch"]
         if codes.contains(code) { return true }
         if code.hasPrefix("history.sqlite."), let number = Int32(code.dropFirst("history.sqlite.".count)), number >= 0 { return true }
         return false
