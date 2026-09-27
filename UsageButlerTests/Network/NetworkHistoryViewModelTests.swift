@@ -106,7 +106,7 @@ final class HistoryUploadRuleEditingTests: XCTestCase {
             var fields = HistoryUploadRuleFields(.init()); fields.sustainedKiB = text
             XCTAssertNotEqual(fields.parsedRule?.isValid, true, text)
         }
-        for text in ["", "nan", "inf", "-1", "0", "1.5", "1073741825", "18446744073709551615"] {
+        for text in ["", "nan", "inf", "-1", "0", "1073741825", "18446744073709551615"] {
             var fields = HistoryUploadRuleFields(.init()); fields.largeMiB = text
             XCTAssertNil(fields.parsedRule, text)
         }
@@ -119,6 +119,47 @@ final class HistoryUploadRuleEditingTests: XCTestCase {
             "当时阈值：连续 ≥ 5.1 秒，每次读数 ≥ 1.50048828125 KiB/s")
         XCTAssertEqual(HistoryUploadRuleFields.sustainedThreshold(.init()),
             "当时阈值：连续 ≥ 60 秒，每次读数 ≥ 100 KiB/s")
+    }
+
+    func testEveryLegalByteThresholdSurvivesUneditedSecondsOnlyAndRateOnlyEdits() throws {
+        for bytes in [UInt64(1_048_576), 1_048_577, 1_572_864, 104_857_600, 1_125_899_906_842_623, 1_125_899_906_842_624] {
+            let original = HistoryUploadRule(largeBytes: bytes, sustainedSeconds: 5.5, sustainedBytesPerSecond: 1_536)
+            var fields = HistoryUploadRuleFields(original)
+            XCTAssertEqual(try XCTUnwrap(fields.parsedRule), original, "bytes=\(bytes)")
+            fields.sustainedSeconds = "6.25"
+            XCTAssertEqual(fields.parsedRule?.largeBytes, bytes)
+            XCTAssertEqual(fields.parsedRule?.sustainedSeconds, 6.25)
+            fields = HistoryUploadRuleFields(original); fields.sustainedKiB = "2.5"
+            XCTAssertEqual(fields.parsedRule?.largeBytes, bytes)
+            XCTAssertEqual(fields.parsedRule?.sustainedBytesPerSecond, 2_560)
+        }
+        XCTAssertEqual(HistoryUploadRuleFields(.init(largeBytes: 1_572_864)).largeMiB, "1.5")
+        XCTAssertEqual(HistoryUploadRuleFields(.init(largeBytes: 1_048_577)).largeMiB, "1.00000095367431640625")
+        XCTAssertEqual(HistoryUploadRuleFields(.init(largeBytes: 1_125_899_906_842_623)).largeMiB, "1073741823.99999904632568359375")
+    }
+
+    func testMiBEditsAreExactAndFractionalBytesCannotRoundIntoAValidRule() throws {
+        let edits: [(String, UInt64)] = [("1.5", 1_572_864), ("1.00000095367431640625", 1_048_577),
+            ("1073741823.99999904632568359375", 1_125_899_906_842_623), ("1073741824", 1_125_899_906_842_624),
+            ("0001.5000000000000000000000", 1_572_864)]
+        for (text, bytes) in edits {
+            var fields = HistoryUploadRuleFields(.init()); fields.largeMiB = text
+            XCTAssertEqual(try XCTUnwrap(fields.parsedRule).largeBytes, bytes, text)
+        }
+        for text in ["0.99999904632568359375", "1073741824.00000095367431640625", "1.0000001", "1.00000095367431640624",
+            "1.000000000000000000000000000000000000000001", "1073741823.99999999999999999999", "1.2.3", "1e309", "NaN", "Infinity", "-1", "1,5"] {
+            var fields = HistoryUploadRuleFields(.init()); fields.largeMiB = text
+            XCTAssertNil(fields.parsedRule, text)
+        }
+    }
+
+    func testDeterministicInteriorByteThresholdsRoundTripWithoutFloatingRounding() {
+        var seed: UInt64 = 17
+        for _ in 0..<256 {
+            seed = seed &* 6_364_136_223_846_793_005 &+ 1
+            let bytes = 1_048_576 + seed % (1_125_899_906_842_624 - 1_048_576 + 1)
+            XCTAssertEqual(HistoryUploadRuleFields(.init(largeBytes: bytes)).parsedRule?.largeBytes, bytes)
+        }
     }
 }
 

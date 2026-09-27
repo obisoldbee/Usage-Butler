@@ -30,7 +30,19 @@ struct BackgroundHistorySettingsView: View {
                 }
                 Divider()
                 Text("本地上传活动筛选").font(.subheadline.weight(.semibold))
-                HStack { Text("连续上传段 ≥"); TextField("MiB", text: $ruleFields.largeMiB).frame(width: 100); Text("MiB") }
+                HStack {
+                    Text("连续上传段 ≥")
+                    TextField("MiB", text: $ruleFields.largeMiB).frame(width: 260)
+                        .accessibilityIdentifier("settings.history.largeMiB")
+                    Text("MiB")
+                }
+                if let bytes = ruleFields.parsedLargeBytes {
+                    Text("精确阈值：\(String(bytes)) 字节").font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("settings.history.largeBytes")
+                } else {
+                    Text("MiB 需对应完整字节，范围为1–1073741824 MiB。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 HStack {
                     Text("持续 ≥"); TextField("秒", text: $ruleFields.sustainedSeconds).frame(width: 70); Text("秒，每次采样 ≥")
                     TextField("KiB/s", text: $ruleFields.sustainedKiB).frame(width: 80); Text("KiB/s")
@@ -67,7 +79,7 @@ struct BackgroundHistorySettingsView: View {
     }
     private func saveRule() {
         guard let rule = ruleFields.parsedRule else {
-            ruleMessage = "请输入范围内的数字。"; return
+            ruleMessage = "请输入范围内的数字；MiB 必须对应完整字节。"; return
         }
         guard rule.isValid, let onRule = model.onRule else { ruleMessage = "持续时间需5–86400秒，速率至少1 KiB/s。"; return }
         savingRule = true; ruleMessage = nil
@@ -80,22 +92,57 @@ struct BackgroundHistorySettingsView: View {
 }
 
 /// Editable rule values need a round-trippable representation, unlike the
-/// rounded rates used for live traffic. KiB conversion is an exact binary scale.
+/// rounded rates used for live traffic. MiB uses exact decimal arithmetic to
+/// reject fractional bytes even when a Double would round them to an integer.
 struct HistoryUploadRuleFields {
     var largeMiB: String
     var sustainedSeconds: String
     var sustainedKiB: String
 
     init(_ rule: HistoryUploadRule) {
-        largeMiB = String(rule.largeBytes / 1_048_576)
+        largeMiB = Self.exactMiB(rule.largeBytes)
         sustainedSeconds = Self.number(rule.sustainedSeconds)
         sustainedKiB = Self.number(rule.sustainedBytesPerSecond / 1_024)
     }
 
     var parsedRule: HistoryUploadRule? {
-        guard let mib = UInt64(largeMiB), (1...1_073_741_824).contains(mib),
+        guard let bytes = parsedLargeBytes,
               let seconds = Double(sustainedSeconds), let kib = Double(sustainedKiB) else { return nil }
-        return .init(largeBytes: mib * 1_048_576, sustainedSeconds: seconds, sustainedBytesPerSecond: kib * 1_024)
+        let rule = HistoryUploadRule(largeBytes: bytes, sustainedSeconds: seconds, sustainedBytesPerSecond: kib * 1_024)
+        return rule.isValid ? rule : nil
+    }
+
+    var parsedLargeBytes: UInt64? {
+        let text = largeMiB.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.utf8.count <= 128 else { return nil }
+        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
+        guard (1...2).contains(parts.count), parts.allSatisfy({ !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) } }) else { return nil }
+        let whole = String(parts[0].drop(while: { $0 == "0" }))
+        var fraction = parts.count == 2 ? String(parts[1]) : ""
+        while fraction.last == "0" { fraction.removeLast() }
+        // A whole byte divided by 2^20 has at most 20 decimal places.
+        // These bounds also keep multiplication within Decimal's exact precision.
+        guard whole.count <= 10, fraction.count <= 20,
+              var mib = Decimal(string: (whole.isEmpty ? "0" : whole) + (fraction.isEmpty ? "" : "." + fraction),
+                                locale: Locale(identifier: "en_US_POSIX")) else { return nil }
+        var scale = Decimal(1_048_576), bytes = Decimal(), integral = Decimal()
+        guard NSDecimalMultiply(&bytes, &mib, &scale, .plain) == .noError else { return nil }
+        NSDecimalRound(&integral, &bytes, 0, .down)
+        guard bytes == integral, bytes >= Decimal(1_048_576), bytes <= Decimal(1_125_899_906_842_624 as UInt64) else { return nil }
+        return NSDecimalNumber(decimal: bytes).uint64Value
+    }
+
+    private static func exactMiB(_ bytes: UInt64) -> String {
+        let scale: UInt64 = 1_048_576
+        var text = String(bytes / scale), remainder = bytes % scale
+        guard remainder != 0 else { return text }
+        text += "."
+        while remainder != 0 {
+            remainder *= 10
+            text += String(remainder / scale)
+            remainder %= scale
+        }
+        return text
     }
 
     static func sustainedThreshold(_ rule: HistoryUploadRule) -> String {

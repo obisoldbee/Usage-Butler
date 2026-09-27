@@ -156,14 +156,8 @@ final class AppRuntime: ObservableObject {
         let useProcessSource = true
         #endif
         if useProcessSource {
-            do {
-                backgroundNetwork = try BackgroundNetworkController(model: menuModel.backgroundNetwork,
-                    process: menuModel.processNetwork, defaults: defaults)
-            } catch {
-                backgroundNetwork = nil
-                menuModel.backgroundNetwork.registration = "notFound"
-                menuModel.backgroundNetwork.serviceIssue = "history.embedded-service-unavailable"
-            }
+            backgroundNetwork = BackgroundNetworkController.constructForRuntime(model: menuModel.backgroundNetwork,
+                process: menuModel.processNetwork, defaults: defaults)
         } else { backgroundNetwork = nil }
         configureMenuActions()
         menuModel.updateGlobalShortcutText(

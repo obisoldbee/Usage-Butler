@@ -20,6 +20,22 @@ extension SMAppService: BackgroundNetworkRegistration {}
 @MainActor
 final class BackgroundNetworkController {
     static let preference = "network.backgroundHistory.enabled"
+    /// AppRuntime and isolated tests use this same construction/failure boundary.
+    /// Construction does not register a service or start a fallback collector.
+    static func constructForRuntime(model: BackgroundNetworkViewModel, process: ProcessNetworkViewModel,
+        defaults: UserDefaults,
+        construct: (BackgroundNetworkViewModel, ProcessNetworkViewModel, UserDefaults) throws -> BackgroundNetworkController = {
+            try BackgroundNetworkController(model: $0, process: $1, defaults: $2)
+        }) -> BackgroundNetworkController? {
+        do { return try construct(model, process, defaults) }
+        catch {
+            // A path, signature or read failure does not prove component absence.
+            model.registration = "unavailable"
+            model.serviceIssue = "history.embedded-service-unavailable"
+            process.setObservationState(.unavailable)
+            return nil
+        }
+    }
     private let model: BackgroundNetworkViewModel
     private let process: ProcessNetworkViewModel
     private let defaults: UserDefaults

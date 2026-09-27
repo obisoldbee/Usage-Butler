@@ -4,7 +4,7 @@ import ServiceManagement
 import XCTest
 import UsageButlerCore
 import UsageButlerDomain
-import UsageButlerUI
+@testable import UsageButlerUI
 
 private actor ControllerGate {
     private var open = false
@@ -18,8 +18,11 @@ private final class FakeHistoryRegistration: BackgroundNetworkRegistration {
     var status: SMAppService.Status = .enabled
     var failUnregister = false
     var registrationResult: SMAppService.Status = .enabled
-    func register() throws { status = registrationResult }
+    var registerCalls = 0
+    var unregisterCalls = 0
+    func register() throws { registerCalls += 1; status = registrationResult }
     func unregister() async throws {
+        unregisterCalls += 1
         if failUnregister { throw ControllerTestError.failed }; status = .notRegistered
     }
 }
@@ -29,6 +32,8 @@ private actor ControllerClient: BackgroundNetworkClient {
     let legacyQuery: Bool
     let wrongScope: Bool
     private(set) var lastQuery: BackgroundNetworkRequest?
+    private(set) var requestCount = 0
+    private(set) var lastRule: HistoryUploadRule?
     let stopEntered = ControllerGate(), stopRelease: ControllerGate?
     let pollEntered = ControllerGate(), pollRelease: ControllerGate?
     init(failStop: Bool = false, blockStop: Bool = false, blockPoll: Bool = false, timeout: Bool = false, legacyQuery: Bool = false, wrongScope: Bool = false) {
@@ -36,6 +41,8 @@ private actor ControllerClient: BackgroundNetworkClient {
         self.failStop = failStop; stopRelease = blockStop ? .init() : nil; pollRelease = blockPoll ? .init() : nil
     }
     func request(_ request: BackgroundNetworkRequest) async throws -> BackgroundNetworkResponse {
+        requestCount += 1
+        if request.operation == .updateRule { lastRule = request.rule }
         if timeout { throw BackgroundNetworkWire.Failure.timeout }
         if request.operation == .query, let range = request.range {
             lastQuery = request
@@ -131,6 +138,98 @@ final class BackgroundNetworkControllerTests: XCTestCase {
 
 
 extension BackgroundNetworkControllerTests {
+    func testSettingsFieldsThroughActualSaveCallbackPreserveExactBytesInPreferencesAndRequest() async throws {
+        let suite = "UsageButler.ExactRuleSave." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = BackgroundNetworkViewModel(), process = ProcessNetworkViewModel()
+        let service = FakeHistoryRegistration(), client = ControllerClient()
+        let controller = try XCTUnwrap(BackgroundNetworkController.constructForRuntime(model: model, process: process, defaults: defaults) { model, process, defaults in
+            BackgroundNetworkController(model: model, process: process, defaults: defaults, service: service, client: client,
+                databaseURL: URL(fileURLWithPath: "/nonexistent-rule-fixture/history.sqlite"),
+                executable: URL(fileURLWithPath: "/nonexistent-rule-fixture/helper"), executableSHA256: "test", binding: "test")
+        })
+        let save = try XCTUnwrap(model.onRule)
+        for bytes: UInt64 in [1_048_576, 1_048_577, 1_572_864, 104_857_600, 1_125_899_906_842_623, 1_125_899_906_842_624] {
+            for edit in 0..<4 {
+                var fields = HistoryUploadRuleFields(.init(largeBytes: bytes, sustainedSeconds: 5.5, sustainedBytesPerSecond: 1_536))
+                if edit == 1 { fields.sustainedSeconds = "6.25" }
+                if edit == 2 { fields.sustainedKiB = "2.5" }
+                if edit == 3 { fields.largeMiB = "1.5" }
+                let value = try XCTUnwrap(fields.parsedRule)
+                try await save(value)
+                let persisted = try JSONDecoder().decode(HistoryUploadRule.self, from: XCTUnwrap(defaults.data(forKey: "network.backgroundHistory.uploadRule")))
+                let sent = await client.lastRule
+                XCTAssertEqual(persisted, value); XCTAssertEqual(sent, value); XCTAssertEqual(model.configuredRule, value)
+                XCTAssertEqual(value.largeBytes, edit == 3 ? 1_572_864 : bytes)
+            }
+        }
+        XCTAssertEqual(service.registerCalls, 0); XCTAssertEqual(service.unregisterCalls, 0); XCTAssertNil(process.snapshot)
+        await controller.disconnect()
+    }
+
+    func testRuntimeConstructionFailureSynchronizesBothPagesWithoutCreatingDataOrStartingAnything() async {
+        let suite = "UsageButler.ConstructionFailure." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let service = FakeHistoryRegistration(), client = ControllerClient()
+        let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent(".build/round02-construction-" + UUID().uuidString)
+        for retained in [false, true] {
+            let model = BackgroundNetworkViewModel(), process = ProcessNetworkViewModel()
+            if retained { process.apply(controllerSnapshot()) }
+            let prior = process.snapshot
+            var attempts = 0
+            let controller = BackgroundNetworkController.constructForRuntime(model: model, process: process, defaults: defaults) { _, _, _ in
+                attempts += 1
+                throw ControllerTestError.failed
+            }
+            XCTAssertNil(controller); XCTAssertEqual(attempts, 1)
+            XCTAssertEqual(model.registration, "unavailable", "a generic construction error does not prove missing files")
+            XCTAssertEqual(model.serviceIssue, "history.embedded-service-unavailable")
+            XCTAssertEqual(process.observationState, .unavailable)
+            XCTAssertEqual(process.snapshot, prior)
+            if !retained { XCTAssertNil(process.snapshot); XCTAssertNil(process.snapshotForExport) }
+            XCTAssertNil(model.status); XCTAssertNil(model.onEnabled); XCTAssertNil(model.onQuery)
+            XCTAssertNil(defaults.persistentDomain(forName: suite))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+        }
+        XCTAssertEqual(service.registerCalls, 0); XCTAssertEqual(service.unregisterCalls, 0)
+        let requests = await client.requestCount; XCTAssertEqual(requests, 0)
+    }
+
+    func testRuntimeConstructionSuccessRemainsColdThenApprovalOrFirstSnapshotWorks() async throws {
+        for approval in [false, true] {
+            let suite = "UsageButler.ConstructionSuccess." + UUID().uuidString
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let model = BackgroundNetworkViewModel(), process = ProcessNetworkViewModel()
+            let service = FakeHistoryRegistration(), client = ControllerClient()
+            if approval { service.status = .requiresApproval }
+            let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+                .deletingLastPathComponent().appendingPathComponent(".build/round02-construction-" + UUID().uuidString)
+            let controller = try XCTUnwrap(BackgroundNetworkController.constructForRuntime(model: model, process: process, defaults: defaults) { model, process, defaults in
+                BackgroundNetworkController(model: model, process: process, defaults: defaults, service: service, client: client,
+                    databaseURL: directory.appendingPathComponent("history.sqlite"), executable: directory.appendingPathComponent("helper"),
+                    executableSHA256: "test", binding: "test", replyValidator: { _ in })
+            })
+            XCTAssertEqual(process.observationState, .connecting); XCTAssertNil(process.snapshot)
+            XCTAssertNil(model.serviceIssue); XCTAssertEqual(service.registerCalls, 0)
+            let initialRequests = await client.requestCount; XCTAssertEqual(initialRequests, 0)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+            await controller.setEnabled(true); await controller.fetch()
+            if approval {
+                XCTAssertEqual(model.registration, "requiresApproval")
+                XCTAssertEqual(process.observationState, .requiresApproval); XCTAssertNil(process.snapshot)
+            } else {
+                XCTAssertEqual(process.observationState, .observing(.active))
+                XCTAssertEqual(process.snapshot, controllerSnapshot())
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+            await controller.disconnect()
+        }
+    }
+
     func testColdApprovalNotFoundTimeoutAndConfirmedUnregisteredStatesWithoutInventedSnapshot() async {
         for (registration, timeout, expected) in [
             (SMAppService.Status.requiresApproval, false, ProcessNetworkViewModel.ObservationState.requiresApproval),

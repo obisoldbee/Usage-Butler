@@ -4,6 +4,7 @@ import XCTest
 @testable import UsageButlerCore
 import UsageButlerDomain
 @testable import UsageButlerInfrastructure
+@testable import UsageButlerUI
 
 final class HistoryMinuteTests: XCTestCase {
     func testAllIntegerBoundariesRoundTripWithoutFloatingConversion() {
@@ -149,6 +150,38 @@ private final class HistoryTestAge: @unchecked Sendable {
 @MainActor
 final class NetworkHistoryStoreTests: XCTestCase {
     private let day: TimeInterval = 1_699_920_000 // UTC midnight, minute aligned.
+    func testExactEditedThresholdOnlyAffectsFutureActivityAndPreservesRecordedRule() async throws {
+        let store = try NetworkHistoryStore(directory: directory())
+        let old = HistoryUploadRule(largeBytes: 1_048_577, sustainedSeconds: 5.5, sustainedBytesPerSecond: 1_536)
+        try await store.setUploadRule(old)
+        try await store.accept(frame(1, at: day + 1, upload: old.largeBytes)); try await store.flush()
+        let query = NetworkHistoryQuery(databaseURL: store.databaseURL)
+        let range = HistoryRange(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60))
+        let before = try await query.query(range: range)
+        let first = try XCTUnwrap(before.events.first); XCTAssertEqual(first.rule, old)
+        var fields = HistoryUploadRuleFields(old); fields.sustainedSeconds = "6.25"
+        let edited = try XCTUnwrap(fields.parsedRule); XCTAssertEqual(edited.largeBytes, old.largeBytes)
+        try await store.setUploadRule(edited)
+        try await store.accept(frame(2, at: day + 2, upload: 1_048_576)); try await store.flush()
+        let below = try await query.query(range: range); XCTAssertEqual(below.events.count, 1)
+        try await store.accept(frame(3, at: day + 3, upload: 1)); try await store.flush()
+        let next = try await query.query(range: range)
+        XCTAssertEqual(next.events.count, 2)
+        let retained = try XCTUnwrap(next.events.first { $0.id == first.id })
+        XCTAssertEqual(retained.rule, old); XCTAssertEqual(retained.bytes, first.bytes)
+        XCTAssertEqual(retained.endReason, "rule-changed")
+        XCTAssertEqual(next.events.first { $0.id != first.id }?.rule, edited)
+        fields.largeMiB = "1.5"; let changedMiB = try XCTUnwrap(fields.parsedRule)
+        try await store.setUploadRule(changedMiB)
+        try await store.accept(frame(4, at: day + 4, upload: 1_572_863)); try await store.flush()
+        let belowNew = try await query.query(range: range); XCTAssertEqual(belowNew.events.count, 2)
+        try await store.accept(frame(5, at: day + 5, upload: 1)); try await store.flush()
+        let final = try await query.query(range: range)
+        XCTAssertEqual(final.events.count, 3)
+        XCTAssertEqual(final.events.first { $0.rule == changedMiB }?.bytes, 1_572_864)
+        XCTAssertEqual(final.events.first { $0.id == first.id }?.rule, old)
+        try await store.close()
+    }
     private func directory() throws -> URL {
         // XCTest's working directory may be /tmp. Keep generated databases in
         // this source worktree instead of depending on a process-global path.
