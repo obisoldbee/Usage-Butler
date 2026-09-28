@@ -46,34 +46,45 @@ struct NetworkHistoryView: View {
             Picker("历史范围", selection: $model.range) {
                 ForEach(BackgroundNetworkViewModel.Range.allCases) { Text($0.title).tag($0) }
             }.pickerStyle(.segmented).accessibilityIdentifier("network.history.range")
-            HStack {
-                TextField("搜索历史应用名称、标识或路径", text: $model.search)
-                    .textFieldStyle(.roundedBorder).accessibilityIdentifier("network.history.search")
-                if !model.search.isEmpty {
-                    Button("清除") { model.search = "" }.accessibilityIdentifier("network.history.search.clear")
+            if model.selectedApplication == nil {
+                HStack {
+                    TextField("搜索历史应用名称、标识或路径", text: $model.search)
+                        .textFieldStyle(.roundedBorder).accessibilityIdentifier("network.history.search")
+                    if !model.search.isEmpty {
+                        Button("清除") { model.search = "" }.accessibilityIdentifier("network.history.search.clear")
+                    }
                 }
+                Text("搜索整个所选范围，包含已退出应用及保留的身份名称。")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Text("搜索整个所选范围，包含已退出应用及保留的身份名称。")
-                .font(.caption2).foregroundStyle(.secondary)
-            Text(model.serviceTitle).font(.caption).foregroundStyle(.secondary)
+            Text("后台状态：" + model.serviceTitle).font(.caption).foregroundStyle(.secondary)
             if model.loading { ProgressView("读取已提交历史…").controlSize(.small) }
             if let issue = model.queryIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
             if let notice = model.navigationNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
             if let result = model.result {
-                Text("\(result.range.start.formatted(date: .abbreviated, time: .shortened)) — \(result.range.end.formatted(date: .abbreviated, time: .shortened)) · 整分钟范围")
-                    .font(.caption2).foregroundStyle(.secondary)
-                coverage(result)
+                Text("所选范围  \(result.range.start.formatted(date: .abbreviated, time: .shortened)) — \(result.range.end.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.callout).monospacedDigit().fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("network.history.absoluteRange")
                 if model.selectedApplication != nil {
-                    HistoryCurveView(buckets: result.curve, range: result.range)
                     if let app = result.applications.first {
-                        Text("已观察 ↑ \(NetworkPresentation.bytes(app.totals.upload)) · ↓ \(NetworkPresentation.bytes(app.totals.download))")
-                            .font(.callout).monospacedDigit()
-                        Text(app.identityOrder == .observed
-                             ? "所选范围含 \(app.identitySnapshotCount) 份身份快照；显示最近观察到的名称。"
-                             : "所选范围含 \(app.identitySnapshotCount) 份旧身份快照；观察顺序未记录，显示名称不代表最近身份。")
-                            .font(.caption2).foregroundStyle(.secondary)
+                        HStack(spacing: 24) {
+                            Label("已观察上传  " + NetworkPresentation.bytes(HistoryCurvePresentation.observedBytes(app.totals, upload: true)), systemImage: "arrow.up")
+                                .foregroundStyle(NetworkPresentation.uploadColor)
+                            Label("已观察下载  " + NetworkPresentation.bytes(HistoryCurvePresentation.observedBytes(app.totals, upload: false)), systemImage: "arrow.down")
+                                .foregroundStyle(NetworkPresentation.downloadColor)
+                        }.font(.headline).monospacedDigit()
                     } else { Text(emptyText(result)).font(.callout).foregroundStyle(.secondary) }
+                    if let notice = HistoryCurvePresentation.historyNotice(coverage: result.coverage, range: result.range) {
+                        Text(notice).font(.caption).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("network.history.recordingStart")
+                    }
+                    HistoryCurveView(buckets: result.curve, range: result.range, firstCollectedAt: result.coverage.firstCollectedAt)
+                        .id(result.contract?.context.id)
+                    Text(HistoryCurvePresentation.trafficScope).font(.caption).foregroundStyle(.secondary)
                 } else {
+                    if let notice = HistoryCurvePresentation.historyNotice(coverage: result.coverage, range: result.range) {
+                        Text(notice).font(.caption).foregroundStyle(.secondary)
+                    }
                     Text("按已观察上传排序").font(.caption).foregroundStyle(.secondary)
                     ForEach(result.applications) { app in
                         Button { model.openApplication(app) } label: {
@@ -83,7 +94,7 @@ struct NetworkHistoryView: View {
                                     if app.identityOrder == .legacyUnverified {
                                         Text("旧数据：身份顺序未验证").font(.caption2).foregroundStyle(.secondary)
                                     }
-                                    if !app.totals.quality.isEmpty { Text("包含未完整观察时段").font(.caption2).foregroundStyle(.secondary) }
+                                    if !app.totals.quality.subtracting(.minuteBoundary).isEmpty { Text("包含质量提示，详见应用记录").font(.caption2).foregroundStyle(.secondary) }
                                 }.frame(maxWidth: .infinity, alignment: .leading)
                                 Text("↑ \(NetworkPresentation.bytes(app.totals.upload))").foregroundStyle(NetworkPresentation.uploadColor)
                                 Text("↓ \(NetworkPresentation.bytes(app.totals.download))").foregroundStyle(NetworkPresentation.downloadColor)
@@ -96,6 +107,16 @@ struct NetworkHistoryView: View {
                     }
                     if result.applications.isEmpty { Text(emptyText(result)).font(.callout).foregroundStyle(.secondary).padding(.vertical, 18) }
                 }
+                DisclosureGroup("采集诊断") {
+                    Text(HistoryCurvePresentation.diagnosticsScope).font(.caption).foregroundStyle(.secondary)
+                    coverage(result)
+                    if model.selectedApplication != nil, let app = result.applications.first {
+                        Text(app.identityOrder == .observed
+                             ? "所选应用在范围内含 \(app.identitySnapshotCount) 份身份快照；显示最近观察到的名称。"
+                             : "所选应用含 \(app.identitySnapshotCount) 份旧身份快照；观察顺序未记录，名称不代表最近身份。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }.accessibilityIdentifier("network.history.diagnostics")
                 if !result.days.isEmpty {
                     DisclosureGroup("每天汇总（UTC 日期）") {
                         ForEach(result.days) { day in
@@ -122,7 +143,7 @@ struct NetworkHistoryView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(event.name) · \(event.kind == "large" ? "大量上传" : "持续上传")").font(.caption.weight(.medium))
                         Text("\(event.start.formatted(date: .abbreviated, time: .standard)) — \(event.end.formatted(date: .abbreviated, time: .standard))")
-                        Text("整段观察 ↑ \(NetworkPresentation.bytes(event.bytes)) · 峰值 \(NetworkPresentation.rate(event.peak)) · \(Int(event.observedSeconds)) 秒")
+                        Text("整段观察 ↑ \(NetworkPresentation.bytes(event.bytes)) · 采样峰值 \(NetworkPresentation.rate(event.peak)) · \(Int(event.observedSeconds)) 秒")
                         Text(event.kind == "large" ? "当时阈值：连续段 ≥ \(NetworkPresentation.bytes(event.rule.largeBytes))" :
                             HistoryUploadRuleFields.sustainedThreshold(event.rule))
                         if let reason = event.endReason { Text("分段原因：\(reason)") }
@@ -202,13 +223,13 @@ struct NetworkHistoryView: View {
         VStack(alignment: .leading, spacing: 4) {
             if let date = c.lastCommittedAt { Text("最近已保存：\(date.formatted(date: .abbreviated, time: .standard))") }
             if let date = c.firstCollectedAt { Text("开始记录：\(date.formatted(date: .abbreviated, time: .standard)) · 默认保留 14 天") }
-            Text("范围内源样本 \(c.sourceSamples) 次 · 不完整 \(c.sourcePartialSamples) 次 · 无法归属 \(c.unattributedSamples) 条")
+            Text("全局源样本 \(c.sourceSamples) 次 · 不完整采样 \(c.sourcePartialSamples) 次 · 无法归属记录 \(c.unattributedSamples) 次")
             Text("停止、休眠和来源缺口留空；分钟内只观察到部分时间时，不记作完整一分钟。")
             if c.retentionTrimmed { Text("较早记录已按保留期限清理；被清理时段不表示零流量。") }
             if c.eventsTruncated { Text("活动列表已触及容量限制；基础分钟记录仍独立保存。") }
             if c.recoveredUncleanSession { Text("上次服务未正常关闭：最后确认提交之后尚未保存的记录可能缺失。正常目标约每5秒提交，调度停顿可能延长；停机期间为未观察。") }
             if c.conservativeAge { Text("跨启动的离线时长无法核实，部分记录会保守多保留。") }
-        }.font(.caption2).foregroundStyle(.secondary)
+        }.font(.caption).foregroundStyle(.secondary)
     }
     private func emptyText(_ result: HistoryQueryResult) -> String {
         if result.totalApplications > 0 { return "本页已无更多应用；范围内共有 \(result.totalApplications) 个应用，可继续查看下方活动或返回上一页。" }
@@ -229,95 +250,160 @@ struct NetworkHistoryView: View {
     }
 }
 
+struct HistoryCurveReadout: View {
+    let point: HistoryCurveBucket
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("\(point.start.formatted(date: .abbreviated, time: .standard)) — \(point.end.formatted(date: .abbreviated, time: .standard)) · 时段跨度 \(HistoryCurvePresentation.span(point))")
+                .font(.callout.weight(.medium)).monospacedDigit()
+            HStack(alignment: .top, spacing: 16) {
+                directionReadout(point, upload: true)
+                directionReadout(point, upload: false)
+            }
+            if point.totals.quality.contains(.minuteBoundary) {
+                Text("含跨分钟计数：不可拆分的计数归入当前时段；此标记本身不表示丢样，也不证明时段间连续。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.background, in: RoundedRectangle(cornerRadius: 6))
+            .accessibilityIdentifier("network.history.inspection")
+    }
+
+    private func directionReadout(_ point: HistoryCurveBucket, upload: Bool) -> some View {
+        let bytes = HistoryCurvePresentation.observedBytes(point.totals, upload: upload)
+        return VStack(alignment: .leading, spacing: 3) {
+            Text((upload ? "↑ 上传均速  " : "↓ 下载均速  ") + NetworkPresentation.rate(HistoryCurvePresentation.average(point, upload: upload)))
+                .font(.callout.weight(.medium))
+            Text("已观察字节：" + (bytes.map { "\($0) 字节（\(NetworkPresentation.bytes($0))）" } ?? "未知"))
+            Text("实际观察 \(HistoryCurvePresentation.observedSeconds(point, upload: upload).formatted(.number.precision(.fractionLength(0...3)))) 秒 · \(HistoryCurvePresentation.observation(point, upload: upload))")
+            Text("采样峰值：" + NetworkPresentation.rate(HistoryCurvePresentation.peak(point.totals, upload: upload)))
+        }.font(.caption).monospacedDigit().frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+}
+
 struct HistoryCurveView: View {
     let buckets: [HistoryCurveBucket]
     let range: HistoryRange
-    @State private var inspected: Date?
-    @State private var pinned = false
-    @FocusState private var focused: Bool
+    var firstCollectedAt: Date? = nil
+    @State private var interaction = HistoryCurveInteraction()
+    @FocusState private var focused: HistoryChartDirection?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("分钟均速 · 多天范围按相邻分钟合并显示").font(.caption).foregroundStyle(.secondary)
-            direction(upload: true); Divider(); direction(upload: false)
-            if let inspected, let point = buckets.first(where: { inspected >= $0.start && inspected < $0.end }) {
-                Text("\(point.start.formatted(date: .abbreviated, time: .shortened)) · ↑ \(NetworkPresentation.rate(average(point, upload: true))) · ↓ \(NetworkPresentation.rate(average(point, upload: false)))")
-                    .font(.caption2).monospacedDigit()
-                Text("实际观察 ↑ \(Double(point.totals.uploadObservedMicroseconds) / 1e6, specifier: "%.1f") 秒 · ↓ \(Double(point.totals.downloadObservedMicroseconds) / 1e6, specifier: "%.1f") 秒")
-                    .font(.caption2).foregroundStyle(.secondary)
-            }
-            Text("上下行独立缩放；等高不代表等速。空档不补零，柱形均速不能表示分钟内的连续性。")
-                .font(.caption2).foregroundStyle(.secondary)
-            Text("悬停查看，点击固定；聚焦后左右键移动，Escape释放。").font(.caption2).foregroundStyle(.secondary)
-        }.padding(10).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
-    }
-    private func average(_ point: HistoryCurveBucket, upload: Bool) -> Double? {
-        let bytes = upload ? point.totals.upload : point.totals.download
-        let micros = upload ? point.totals.uploadObservedMicroseconds : point.totals.downloadObservedMicroseconds
-        guard let bytes, micros > 0 else { return nil }; return Double(bytes) / (Double(micros) / 1e6)
-    }
-    private func direction(upload: Bool) -> some View {
-        let color = upload ? NetworkPresentation.uploadColor : NetworkPresentation.downloadColor
-        let peak = buckets.filter { (upload ? $0.totals.uploadSamples : $0.totals.downloadSamples) > 0 }
-            .map { upload ? $0.totals.peakUpload : $0.totals.peakDownload }.max()
-        let upper = max(1, buckets.compactMap { average($0, upload: upload) }.max() ?? 1)
-        let coordinates = NetworkChartCoordinates(now: range.end, window: range.end.timeIntervalSince(range.start), upperBound: upper)
-        return VStack(alignment: .leading, spacing: 3) {
-            HStack { Text(upload ? "上传" : "下载").foregroundStyle(color); Spacer(); Text("真实采样峰值 \(NetworkPresentation.rate(peak))").foregroundStyle(.secondary) }.font(.caption)
-            Chart {
-                ForEach(buckets) { point in
-                    if let rate = average(point, upload: upload) {
-                        RectangleMark(xStart: .value("开始", coordinates.x(at: point.start)), xEnd: .value("结束", coordinates.x(at: point.end)),
-                                      yStart: .value("零基线", 0.0), yEnd: .value("观察均速", coordinates.y(for: rate)))
-                            .foregroundStyle(color.opacity(point.totals.quality.isEmpty ? 0.8 : 0.5))
-                    }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("已观察时段的平均速率").font(.subheadline.weight(.semibold))
+            Text(HistoryCurvePresentation.granularity(buckets)).font(.caption).foregroundStyle(.secondary)
+            direction(.upload); direction(.download)
+            if let inspected = interaction.inspected {
+                if let point = HistoryCurvePresentation.bucket(at: inspected, in: buckets) {
+                    HistoryCurveReadout(point: point)
+                } else {
+                    Text("\(inspected.formatted(date: .abbreviated, time: .standard)) · 该时段无可用记录")
+                        .font(.callout).accessibilityIdentifier("network.history.inspection.gap")
                 }
-                if let inspected { RuleMark(x: .value("查看时间", coordinates.x(at: inspected))).foregroundStyle(.secondary).lineStyle(.init(lineWidth: 1, dash: [3])) }
+            } else {
+                Text("悬停查看双向读数；点击固定，左右键移动，Escape 释放。").font(.caption).foregroundStyle(.secondary)
             }
-            .chartXScale(domain: 0.0...1.0).chartYScale(domain: 0.0...1.0)
-            .chartYAxis { AxisMarks(position: .leading, values: NetworkChartCoordinates.ticks) { value in
-                AxisGridLine(); AxisValueLabel { if let value = value.as(Double.self) { Text(NetworkPresentation.rate(coordinates.rate(atY: value))).font(.system(size: 9)) } }
-            } }
-            .chartXAxis { AxisMarks(values: NetworkChartCoordinates.ticks) { value in
-                AxisGridLine(); AxisValueLabel { if let x = value.as(Double.self) {
-                    Text(coordinates.date(atX: x), format: .dateTime.month().day().hour().minute()).font(.system(size: 9))
-                } }
-            } }
-            .chartOverlay { proxy in
-                GeometryReader { geometry in
-                    Rectangle().fill(.clear).contentShape(Rectangle()).onContinuousHover { phase in
-                        guard !pinned else { return }
-                        switch phase {
-                        case let .active(location):
-                            if let x: Double = proxy.value(atX: location.x - geometry[proxy.plotAreaFrame].origin.x) {
-                                inspected = coordinates.date(atX: min(1, max(0, x)))
-                            }
-                        case .ended: inspected = nil
+            Text("上下行独立缩放，等高不代表等速。彩色基线＝已观察为零；留白＝无可用记录；浅色柱＝部分记录；灰底＝开始记录前。")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("均速＝该时段已观察字节 ÷ 该方向实际观察时长；不代表整段连续采集。采样峰值使用单次读数口径，不是图的纵轴上限。")
+                .font(.caption).foregroundStyle(.secondary)
+        }.padding(12).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
+        .onChange(of: range) { _ in reset() }
+        .onChange(of: buckets) { _ in reset() }
+        .onChange(of: focused) { interaction.focused = $0 }
+    }
+
+    private func direction(_ direction: HistoryChartDirection) -> some View {
+        let upload = direction == .upload
+        let color = upload ? NetworkPresentation.uploadColor : NetworkPresentation.downloadColor
+        let peak = buckets.compactMap { HistoryCurvePresentation.peak($0.totals, upload: upload) }.max()
+        let upper = max(1, buckets.compactMap { HistoryCurvePresentation.average($0, upload: upload) }.max() ?? 1)
+        let coordinates = NetworkChartCoordinates(now: range.end, window: range.end.timeIntervalSince(range.start), upperBound: upper)
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(upload ? "上传均速" : "下载均速").foregroundStyle(color).fontWeight(.medium)
+                Spacer()
+                Text("范围内采样峰值 " + NetworkPresentation.rate(peak)).foregroundStyle(.secondary)
+            }.font(.callout)
+            Chart {
+                if let gap = HistoryCurvePresentation.leadingUnrecorded(range: range, first: firstCollectedAt) {
+                    RectangleMark(xStart: .value("尚未记录起点", 0.0), xEnd: .value("开始记录", coordinates.x(at: gap.end)),
+                                  yStart: .value("底部", 0.0), yEnd: .value("顶部", 1.0))
+                        .foregroundStyle(Color.gray.opacity(0.12))
+                }
+                ForEach(buckets) { point in
+                    if let rate = HistoryCurvePresentation.average(point, upload: upload) {
+                        if rate == 0 {
+                            RuleMark(xStart: .value("开始", coordinates.x(at: point.start)), xEnd: .value("结束", coordinates.x(at: point.end)), y: .value("已观察为零", 0.0))
+                                .foregroundStyle(color.opacity(HistoryCurvePresentation.isPartial(point, upload: upload) ? 0.45 : 0.85)).lineStyle(.init(lineWidth: 2))
+                        }
+                        if rate > 0 {
+                            RectangleMark(xStart: .value("开始", coordinates.x(at: point.start)), xEnd: .value("结束", coordinates.x(at: point.end)),
+                                          yStart: .value("零基线", 0.0), yEnd: .value("观察均速", coordinates.y(for: rate)))
+                                .foregroundStyle(color.opacity(HistoryCurvePresentation.isPartial(point, upload: upload) ? 0.45 : 0.85))
                         }
                     }
-                    .onTapGesture { pinned.toggle(); focused = true; if inspected == nil { inspected = buckets.last?.start } }
                 }
-            }.frame(height: 105).focusable().focused($focused)
-            .onMoveCommand { direction in
-                if direction == .left || direction == .right { step(direction == .right ? 1 : -1) }
-            }
-            .onExitCommand { pinned = false; inspected = nil; focused = false }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(upload ? "历史上传分钟均速" : "历史下载分钟均速")
-            .accessibilityChildren {
-                ForEach(buckets) { point in
-                    Rectangle().accessibilityElement()
-                        .accessibilityLabel(Text(point.start, format: .dateTime.month().day().hour().minute()))
-                        .accessibilityValue(NetworkPresentation.rate(average(point, upload: upload)))
+                if let inspected = interaction.inspected {
+                    RuleMark(x: .value("查看时间", coordinates.x(at: inspected))).foregroundStyle(.secondary).lineStyle(.init(lineWidth: 1, dash: [3]))
                 }
             }
-            .accessibilityChartDescriptor(HistoryChartAccessibility(buckets: buckets, upload: upload, range: range, upper: upper))
+            .chartXScale(domain: 0.0...1.0, range: .plotDimension(padding: 0)).chartYScale(domain: 0.0...1.0)
+            .chartYAxis { AxisMarks(position: .leading, values: NetworkChartCoordinates.ticks) { value in
+                AxisGridLine()
+                AxisValueLabel { if let value = value.as(Double.self) { Text(NetworkPresentation.rate(coordinates.rate(atY: value))).font(.caption2) } }
+            } }
+            // Fixed normalized tick IDs remain in Charts. End labels are laid
+            // out below the plot so Charts cannot cull the right endpoint.
+            .chartXAxis { AxisMarks(values: NetworkChartCoordinates.ticks) { _ in AxisGridLine(); AxisTick() } }
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Rectangle().fill(.clear).contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            let plot = geometry[proxy.plotAreaFrame]
+                            switch phase {
+                            case let .active(location): interaction.hover(at: location, plot: plot, range: range)
+                            case .ended: interaction.hover(at: nil, plot: plot, range: range)
+                            }
+                        }
+                        .gesture(SpatialTapGesture().onEnded { value in
+                            interaction.tap(at: value.location, plot: geometry[proxy.plotAreaFrame], range: range, direction: direction)
+                            focused = interaction.focused
+                        })
+                }
+            }.frame(height: 116).focusable().focused($focused, equals: direction)
+                .onMoveCommand { move in
+                    guard focused == direction else { return }
+                    if move == .left || move == .right { interaction.step(move == .right ? 1 : -1, buckets: buckets) }
+                }
+                .onExitCommand { reset() }
+                .accessibilityIdentifier(upload ? "network.history.chart.upload" : "network.history.chart.download")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(upload ? "历史上传已观察均速" : "历史下载已观察均速")
+                .accessibilityChildren {
+                    ForEach(buckets) { point in
+                        Rectangle().accessibilityElement()
+                            .accessibilityLabel("\(point.start.formatted(date: .abbreviated, time: .shortened)) 至 \(point.end.formatted(date: .abbreviated, time: .shortened))")
+                            .accessibilityValue(NetworkPresentation.rate(HistoryCurvePresentation.average(point, upload: upload)) + " · " + HistoryCurvePresentation.observation(point, upload: upload))
+                    }
+                }
+                .accessibilityChartDescriptor(HistoryChartAccessibility(buckets: buckets, upload: upload, range: range, upper: upper))
+            HStack(alignment: .top) {
+                endpoint(range.start, prefix: "起", alignment: .leading)
+                Spacer(minLength: 12)
+                endpoint(range.end, prefix: "止", alignment: .trailing)
+            }.accessibilityIdentifier(upload ? "network.history.axis.upload" : "network.history.axis.download")
         }
     }
-    private func step(_ offset: Int) {
-        guard !buckets.isEmpty else { return }
-        let index = inspected.flatMap { date in buckets.firstIndex { date >= $0.start && date < $0.end } } ?? (offset > 0 ? -1 : buckets.count)
-        inspected = buckets[min(buckets.count - 1, max(0, index + offset))].start; pinned = true
+
+    private func endpoint(_ date: Date, prefix: String, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 1) {
+            Text(prefix + " " + date.formatted(date: .abbreviated, time: .omitted))
+            Text(date.formatted(date: .omitted, time: .shortened))
+        }.font(.caption).monospacedDigit().fixedSize()
     }
+    private func reset() { interaction.reset(); focused = nil }
 }
 
 private struct HistoryChartAccessibility: AXChartDescriptorRepresentable {
@@ -332,10 +418,10 @@ private struct HistoryChartAccessibility: AXChartDescriptorRepresentable {
         let y = AXNumericDataAxisDescriptor(title: "观察均速，字节每秒", range: 0...upper, gridlinePositions: []) { NetworkPresentation.rate($0) }
         let points = buckets.compactMap { point -> AXDataPoint? in
             let micros = upload ? point.totals.uploadObservedMicroseconds : point.totals.downloadObservedMicroseconds
-            guard let bytes = upload ? point.totals.upload : point.totals.download, micros > 0 else { return nil }
+            guard let bytes = HistoryCurvePresentation.observedBytes(point.totals, upload: upload), micros > 0 else { return nil }
             return AXDataPoint(x: point.start.timeIntervalSince1970, y: Double(bytes) / (Double(micros) / 1e6))
         }
-        return AXChartDescriptor(title: upload ? "历史上传分钟均速" : "历史下载分钟均速", summary: "各桶独立，缺口不连接；不是分钟内连续性证据。",
-            xAxis: x, yAxis: y, series: [AXDataSeriesDescriptor(name: "已观察分钟", isContinuous: false, dataPoints: points)])
+        return AXChartDescriptor(title: upload ? "历史上传已观察均速" : "历史下载已观察均速", summary: "各时段独立，缺口不连接；不是分钟内连续性证据。",
+            xAxis: x, yAxis: y, series: [AXDataSeriesDescriptor(name: "已观察时段", isContinuous: false, dataPoints: points)])
     }
 }
