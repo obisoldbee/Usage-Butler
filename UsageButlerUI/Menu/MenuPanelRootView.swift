@@ -148,14 +148,14 @@ public struct MenuPanelRootView: View {
                 Image(systemName: "gearshape")
             }
             .buttonStyle(.borderless)
-            .help("设置")
+            .help("设置（⌘⇧,）")
             .accessibilityLabel("设置")
         } else {
             Button(action: onOpenSettingsFallback) {
                 Image(systemName: "gearshape")
             }
             .buttonStyle(.borderless)
-            .help("设置")
+            .help("设置（⌘⇧,）")
             .accessibilityLabel("设置")
         }
     }

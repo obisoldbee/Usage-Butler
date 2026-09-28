@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 import Combine
 import SwiftUI
 import UsageButlerCore
@@ -21,8 +20,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
     private let panelSizing = MenuPanelSizing()
     private var sizeObservation: AnyCancellable?
     private var screenObservation: AnyCancellable?
-    private var hotKeyRef: EventHotKeyRef?
-    private var carbonEventHandler: EventHandlerRef?
+    private var shortcuts: ApplicationShortcutController?
     private var keyDownMonitor: Any?
     private var memoryObservation: AnyCancellable?
     private var appearanceObservation: NSKeyValueObservation?
@@ -30,15 +28,6 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
     private var displayedPressure: MemoryPressureState = .unknown
     private var renderedPressure: MemoryPressureState?
     private var renderedDark: Bool?
-
-    private static let hotKeySignature = OSType(0x5542_686B) // "UBhk"
-    private static let hotKeyID: UInt32 = 1
-
-    private final class HotkeyBox: @unchecked Sendable {
-        var onTrigger: (@Sendable () -> Void)?
-    }
-
-    private static let hotkeyBox = HotkeyBox()
 
     init(runtime: AppRuntime) {
         self.runtime = runtime
@@ -86,7 +75,15 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
         }
         keyDownMonitor = monitor
 
-        registerStoredShortcut()
+        let shortcuts = ApplicationShortcutController(registrar: CarbonApplicationHotkeys(),
+            onPanel: { [weak self] in self?.togglePanel() },
+            onSettings: { [weak runtime] in runtime?.openSettingsFallback() },
+            report: { [weak runtime] panel, settings in
+                runtime?.menuModel.updateShortcutIssues(panel: panel, settings: settings)
+                for issue in [panel, settings].compactMap({ $0 }) { NSLog("application_shortcut %@", issue) }
+            })
+        self.shortcuts = shortcuts
+        shortcuts.start(panelShortcut: runtime.storedPanelShortcut)
     }
 
     // Reuse the runtime stream: no new memory reader or polling loop.
@@ -232,73 +229,10 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
 
     // MARK: - Global hotkey
 
-    func applyShortcut(_ shortcut: GlobalShortcut?) {
-        unregisterHotkey()
-        guard let shortcut else {
-            Self.hotkeyBox.onTrigger = nil
-            return
-        }
+    func applyShortcut(_ shortcut: GlobalShortcut?) { shortcuts?.applyPanelShortcut(shortcut) }
 
-        installCarbonHandlerIfNeeded()
-        Self.hotkeyBox.onTrigger = { [weak self] in
-            Task { @MainActor in
-                self?.togglePanel()
-            }
-        }
+    func stopShortcuts() { shortcuts?.stop() }
 
-        var reference: EventHotKeyRef?
-        let status = RegisterEventHotKey(
-            shortcut.keyCode,
-            shortcut.carbonModifiers,
-            EventHotKeyID(
-                signature: Self.hotKeySignature,
-                id: Self.hotKeyID
-            ),
-            GetApplicationEventTarget(),
-            0,
-            &reference
-        )
-        if status == noErr {
-            hotKeyRef = reference
-        }
-    }
-
-    private func registerStoredShortcut() {
-        let stored = UserDefaults.standard.string(
-            forKey: ProviderPreferenceKey.globalShortcut
-        )
-        applyShortcut(stored.flatMap(GlobalShortcut.init(serialized:)))
-    }
-
-    private func unregisterHotkey() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-        }
-        hotKeyRef = nil
-    }
-
-    private func installCarbonHandlerIfNeeded() {
-        guard carbonEventHandler == nil else { return }
-
-        var eventSpec = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
-        InstallEventHandler(
-            GetApplicationEventTarget(),
-            { _, _, userData in
-                guard let userData else { return noErr }
-                let box = Unmanaged<HotkeyBox>.fromOpaque(userData)
-                    .takeUnretainedValue()
-                box.onTrigger?()
-                return noErr
-            },
-            1,
-            &eventSpec,
-            Unmanaged.passUnretained(Self.hotkeyBox).toOpaque(),
-            &carbonEventHandler
-        )
-    }
 }
 
 private struct PanelRootView: View {

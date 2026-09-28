@@ -29,6 +29,14 @@ final class AppRuntime: ObservableObject {
     let menuModel: MenuPanelViewModel
     let launchMode: RuntimeLaunchMode
     var panelController: PanelPresentationController?
+    lazy var settingsPresentation = SettingsPresentationBridge(report: { [weak self] issue in
+        self?.menuModel.updateSettingsOpeningIssue(issue)
+        if let issue { NSLog("settings_open %@", issue) }
+    })
+
+    var storedPanelShortcut: GlobalShortcut? {
+        defaults.string(forKey: ProviderPreferenceKey.globalShortcut).flatMap(GlobalShortcut.init(serialized:))
+    }
 
     private let defaults: UserDefaults
     private let activityMonitorLauncher: any ActivityMonitorLaunching
@@ -196,13 +204,18 @@ final class AppRuntime: ObservableObject {
     }
 
     func openSettingsFallback() {
-        let settingsSelector = Selector(("showSettingsWindow:"))
-        let preferencesSelector = Selector(("showPreferencesWindow:"))
-        let opened = NSApp.sendAction(settingsSelector, to: nil, from: nil)
-        if !opened {
-            NSApp.sendAction(preferencesSelector, to: nil, from: nil)
+        settingsPresentation.requestOpen()
+    }
+
+    func prepareLegacySettingsOpening() {
+        // Modern systems use the action installed by the application scene
+        // graph; legacy selectors are restricted to macOS 13 only.
+        if #unavailable(macOS 14.0) {
+            settingsPresentation.install {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                    || NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+            }
         }
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     func quit() {

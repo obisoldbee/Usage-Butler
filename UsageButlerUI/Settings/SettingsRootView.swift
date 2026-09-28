@@ -260,6 +260,14 @@ public struct SettingsRootView: View {
         SettingsSection(title: String(localized: "快捷键")) {
             GlobalShortcutSettingsRow(model: model)
                 .padding(12)
+            VStack(alignment: .leading, spacing: 5) {
+                Text("打开设置：⌘⇧,（Command + Shift + 逗号）")
+                Text("后台运行时也可直接打开设置；已有设置窗口会前置。此快捷键独立于面板快捷键。")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let issue = model.panelShortcutIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
+                if let issue = model.settingsShortcutIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
+                if let issue = model.settingsOpeningIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
+            }.padding(12)
         }
     }
 
@@ -337,7 +345,7 @@ public struct SettingsRootView: View {
             HStack {
                 Text("键盘快捷键")
                 Spacer()
-                Text(String(localized: "⌘, 设置    ⇧⌘P 面板    ⌘R 刷新    ⌘Q 退出"))
+                Text(String(localized: "⌘⇧, 设置    ⇧⌘P 面板    ⌘R 刷新    ⌘Q 退出"))
                     .foregroundStyle(.secondary)
             }
             .padding(12)

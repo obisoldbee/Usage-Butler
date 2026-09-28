@@ -396,24 +396,24 @@
         }
       }
     },
-    "⌘, 设置    ⇧⌘P 面板    ⌘R 刷新    ⌘Q 退出": {
+    "⌘⇧, 设置    ⇧⌘P 面板    ⌘R 刷新    ⌘Q 退出": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "⌘, 设置    ⇧⌘P 面板    ⌘R 刷新    ⌘Q 退出"
+            "value": "⌘⇧, 设置    ⇧⌘P 面板    ⌘R 刷新    ⌘Q 退出"
           }
         }
       }
     },
-    "⌘, 设置    ⌘R 刷新    ⌘Q 退出": {
+    "⌘⇧, 设置    ⌘R 刷新    ⌘Q 退出": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "⌘, 设置    ⌘R 刷新    ⌘Q 退出"
+            "value": "⌘⇧, 设置    ⌘R 刷新    ⌘Q 退出"
           }
         }
       }

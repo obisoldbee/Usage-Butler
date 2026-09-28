@@ -173,8 +173,8 @@ targets:
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: NO
         AGENT_SERVICE_NAME: io.github.obisoldbee.UsageButler.network-agent
-        MARKETING_VERSION: 0.5.7
-        CURRENT_PROJECT_VERSION: 19
+        MARKETING_VERSION: 0.5.8
+        CURRENT_PROJECT_VERSION: 20
         SWIFT_EMIT_LOC_STRINGS: YES
 
   UsageButlerTests:
@@ -184,6 +184,8 @@ targets:
       - UsageButlerTests
       - UsageButlerApp/BackgroundNetworkController.swift
       - UsageButlerApp/NetworkHistoryWindowController.swift
+      - UsageButlerApp/ApplicationShortcutController.swift
+      - UsageButlerApp/SettingsPresentationBridge.swift
     dependencies:
       - target: UsageButlerDomain
       - target: UsageButlerCore

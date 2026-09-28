@@ -19,6 +19,7 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         guard let runtime else { return }
+        runtime.prepareLegacySettingsOpening()
         let controller = PanelPresentationController(runtime: runtime)
         runtime.panelController = controller
         panelController = controller
@@ -44,6 +45,11 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
         ProcessNetworkValidationRecorder.start(runtime: runtime, panel: controller)
         BackgroundHistoryValidation.start(runtime: runtime)
         #endif
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        panelController?.stopShortcuts()
+        runtime?.settingsPresentation.invalidate()
     }
 
     func applicationShouldTerminate(
@@ -93,13 +99,37 @@ struct UsageButlerApp: App {
     }
 
     var body: some Scene {
+        UsageButlerSettingsScene(runtime: runtime)
+    }
+}
+
+/// Capture the action when the application scene graph is built, independently
+/// of the lazily-created Settings content and the never-yet-opened panel.
+private struct UsageButlerSettingsScene: Scene {
+    @Environment(\.self) private var environment
+    let runtime: AppRuntime
+
+    private func prepareSettingsOpening() {
+        if #available(macOS 14.0, *) {
+            let action = environment.openSettings
+            runtime.settingsPresentation.install { action(); return true }
+        }
+    }
+
+    var body: some Scene {
+        let _ = prepareSettingsOpening()
         Settings {
             SettingsRootView(
                 model: runtime.menuModel,
                 onQuit: runtime.quit
             )
+            .background(SettingsWindowRegistration(bridge: runtime.settingsPresentation))
         }
         .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("打开设置…") { runtime.openSettingsFallback() }
+                    .keyboardShortcut(",", modifiers: [.command, .shift])
+            }
             CommandMenu("额度管家") {
                 Button("刷新") {
                     runtime.menuModel.requestManualRefresh()

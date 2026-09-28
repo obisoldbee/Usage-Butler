@@ -280,6 +280,9 @@ public final class MenuPanelViewModel: ObservableObject {
     @Published public private(set) var larkQuotaAlertChannelStatus:
         LarkQuotaAlertChannelStatus = .notChecked
     @Published public private(set) var globalShortcutText: String?
+    @Published public private(set) var panelShortcutIssue: String?
+    @Published public private(set) var settingsShortcutIssue: String?
+    @Published public private(set) var settingsOpeningIssue: String?
 
     /// Cycles the panel across 额度 → 内存 → 网络 (Tab key inside the panel).
     public func cyclePage() {
@@ -432,6 +435,12 @@ public final class MenuPanelViewModel: ObservableObject {
     public func updateGlobalShortcutText(_ text: String?) {
         globalShortcutText = text
     }
+
+    public func updateShortcutIssues(panel: String?, settings: String?) {
+        panelShortcutIssue = panel; settingsShortcutIssue = settings
+    }
+
+    public func updateSettingsOpeningIssue(_ issue: String?) { settingsOpeningIssue = issue }
 
     public func panelPresented() {
         onPanelPresented?()
