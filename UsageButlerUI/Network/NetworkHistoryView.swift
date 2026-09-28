@@ -73,12 +73,12 @@ struct NetworkHistoryView: View {
                             Label("已观察下载  " + NetworkPresentation.bytes(HistoryCurvePresentation.observedBytes(app.totals, upload: false)), systemImage: "arrow.down")
                                 .foregroundStyle(NetworkPresentation.downloadColor)
                         }.font(.headline).monospacedDigit()
-                    } else { Text(emptyText(result)).font(.callout).foregroundStyle(.secondary) }
+                    } else { Text(HistoryCurvePresentation.emptyText(result)).font(.callout).foregroundStyle(.secondary) }
                     if let notice = HistoryCurvePresentation.historyNotice(coverage: result.coverage, range: result.range) {
                         Text(notice).font(.caption).foregroundStyle(.secondary)
                             .accessibilityIdentifier("network.history.recordingStart")
                     }
-                    HistoryCurveView(buckets: result.curve, range: result.range, firstCollectedAt: result.coverage.firstCollectedAt)
+                    HistoryCurveView(buckets: result.curve, range: result.range)
                         .id(result.contract?.context.id)
                     Text(HistoryCurvePresentation.trafficScope).font(.caption).foregroundStyle(.secondary)
                 } else {
@@ -105,7 +105,7 @@ struct NetworkHistoryView: View {
                             .accessibilityIdentifier("network.history.row.\(app.id)")
                             .onAppear { restoreFocus(for: .application(app.id)) }
                     }
-                    if result.applications.isEmpty { Text(emptyText(result)).font(.callout).foregroundStyle(.secondary).padding(.vertical, 18) }
+                    if result.applications.isEmpty { Text(HistoryCurvePresentation.emptyText(result)).font(.callout).foregroundStyle(.secondary).padding(.vertical, 18) }
                 }
                 DisclosureGroup("采集诊断") {
                     Text(HistoryCurvePresentation.diagnosticsScope).font(.caption).foregroundStyle(.secondary)
@@ -222,7 +222,7 @@ struct NetworkHistoryView: View {
         let c = result.coverage
         VStack(alignment: .leading, spacing: 4) {
             if let date = c.lastCommittedAt { Text("最近已保存：\(date.formatted(date: .abbreviated, time: .standard))") }
-            if let date = c.firstCollectedAt { Text("开始记录：\(date.formatted(date: .abbreviated, time: .standard)) · 默认保留 14 天") }
+            if let date = c.firstCollectedAt { Text("首次开始记录时的系统时间：\(date.formatted(date: .abbreviated, time: .standard)) · 默认保留 14 天") }
             Text("全局源样本 \(c.sourceSamples) 次 · 不完整采样 \(c.sourcePartialSamples) 次 · 无法归属记录 \(c.unattributedSamples) 次")
             Text("停止、休眠和来源缺口留空；分钟内只观察到部分时间时，不记作完整一分钟。")
             if c.retentionTrimmed { Text("较早记录已按保留期限清理；被清理时段不表示零流量。") }
@@ -230,14 +230,6 @@ struct NetworkHistoryView: View {
             if c.recoveredUncleanSession { Text("上次服务未正常关闭：最后确认提交之后尚未保存的记录可能缺失。正常目标约每5秒提交，调度停顿可能延长；停机期间为未观察。") }
             if c.conservativeAge { Text("跨启动的离线时长无法核实，部分记录会保守多保留。") }
         }.font(.caption).foregroundStyle(.secondary)
-    }
-    private func emptyText(_ result: HistoryQueryResult) -> String {
-        if result.totalApplications > 0 { return "本页已无更多应用；范围内共有 \(result.totalApplications) 个应用，可继续查看下方活动或返回上一页。" }
-        if result.contract?.scope.search.isEmpty == false { return "没有符合搜索的应用，可清除搜索后查看此范围的历史。" }
-        if let first = result.coverage.firstCollectedAt, result.range.end <= first { return "此范围早于开始采集时间，无法补回过去流量。" }
-        if result.coverage.retentionTrimmed, let oldest = result.coverage.oldestRetainedAt, result.range.end <= oldest { return "此范围的记录已超出保留期限。" }
-        if result.coverage.unattributedSamples > 0 { return "此范围有源采样，但没有可归属应用的历史。" }
-        return "此范围没有已保存的应用观察；未知时段不能当作零流量。"
     }
     private func prepareExport() {
         guard let result = model.result else { return }
@@ -285,7 +277,6 @@ struct HistoryCurveReadout: View {
 struct HistoryCurveView: View {
     let buckets: [HistoryCurveBucket]
     let range: HistoryRange
-    var firstCollectedAt: Date? = nil
     @State private var interaction = HistoryCurveInteraction()
     @FocusState private var focused: HistoryChartDirection?
 
@@ -304,7 +295,7 @@ struct HistoryCurveView: View {
             } else {
                 Text("悬停查看双向读数；点击固定，左右键移动，Escape 释放。").font(.caption).foregroundStyle(.secondary)
             }
-            Text("上下行独立缩放，等高不代表等速。彩色基线＝已观察为零；留白＝无可用记录；浅色柱＝部分记录；灰底＝开始记录前。")
+            Text("上下行独立缩放，等高不代表等速。彩色基线＝已观察为零；留白＝无可用记录；浅色柱＝部分记录。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("均速＝该时段已观察字节 ÷ 该方向实际观察时长；不代表整段连续采集。采样峰值使用单次读数口径，不是图的纵轴上限。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -327,11 +318,6 @@ struct HistoryCurveView: View {
                 Text("范围内采样峰值 " + NetworkPresentation.rate(peak)).foregroundStyle(.secondary)
             }.font(.callout)
             Chart {
-                if let gap = HistoryCurvePresentation.leadingUnrecorded(range: range, first: firstCollectedAt) {
-                    RectangleMark(xStart: .value("尚未记录起点", 0.0), xEnd: .value("开始记录", coordinates.x(at: gap.end)),
-                                  yStart: .value("底部", 0.0), yEnd: .value("顶部", 1.0))
-                        .foregroundStyle(Color.gray.opacity(0.12))
-                }
                 ForEach(buckets) { point in
                     if let rate = HistoryCurvePresentation.average(point, upload: upload) {
                         if rate == 0 {

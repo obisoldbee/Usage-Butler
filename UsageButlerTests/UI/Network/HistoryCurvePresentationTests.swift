@@ -118,17 +118,49 @@ final class HistoryCurvePresentationTests: XCTestCase {
         XCTAssertTrue(HistoryCurvePresentation.isPartial(asymmetric, upload: false))
     }
 
-    func testAllRangesKeepAbsoluteTimelineAndPrehistoryGap() throws {
+    func testRetentionAgeAloneDoesNotMakeFullyObservedDirectionsPartial() {
+        for quality: HistoryQuality in [.conservativeAge, [.conservativeAge, .minuteBoundary]] {
+            let point = bucket(0, quality: quality)
+            for upload in [true, false] {
+                XCTAssertFalse(HistoryCurvePresentation.isPartial(point, upload: upload), "quality=\(quality.rawValue)")
+                XCTAssertEqual(HistoryCurvePresentation.observation(point, upload: upload), "已记录")
+            }
+            XCTAssertEqual(point.totals.quality, quality, "Presentation must preserve the retention evidence")
+        }
+    }
+
+    func testRetentionAgeDoesNotHideRealDirectionOrSourceGaps() {
+        for quality: HistoryQuality in [.uploadGap, .uploadOverflow, .sourcePartial, .sequenceGap] {
+            let point = bucket(0, quality: quality.union(.conservativeAge))
+            XCTAssertTrue(HistoryCurvePresentation.isPartial(point, upload: true))
+            XCTAssertEqual(HistoryCurvePresentation.observation(point, upload: true), "部分记录")
+        }
+        let short = bucket(0, observed: 59_000_000, quality: .conservativeAge)
+        XCTAssertTrue(HistoryCurvePresentation.isPartial(short, upload: true))
+        XCTAssertEqual(HistoryCurvePresentation.observation(short, upload: true), "部分记录")
+    }
+
+    func testRetentionAgeAndOtherDirectionGapDoNotContaminateCompleteDirection() {
+        for quality: HistoryQuality in [.downloadGap, .downloadOverflow] {
+            let point = bucket(0, quality: quality.union(.conservativeAge))
+            XCTAssertFalse(HistoryCurvePresentation.isPartial(point, upload: true))
+            XCTAssertTrue(HistoryCurvePresentation.isPartial(point, upload: false))
+            XCTAssertEqual(HistoryCurvePresentation.observation(point, upload: true), "已记录")
+        }
+    }
+
+    func testAllRangesKeepAbsoluteTimelineWithoutInferringAbsenceFromFirstWallTime() throws {
         for duration: Double in [3_600, 86_400, 7 * 86_400, 14 * 86_400] {
             let selected = HistoryRange(start: start, end: start.addingTimeInterval(duration))
             let actualStart = start.addingTimeInterval(duration * 0.75)
-            let gap = try XCTUnwrap(HistoryCurvePresentation.leadingUnrecorded(range: selected, first: actualStart))
-            XCTAssertEqual(gap.start, selected.start); XCTAssertEqual(gap.end, actualStart)
+            var coverage = HistoryCoverage(); coverage.firstCollectedAt = actualStart
+            let notice = try XCTUnwrap(HistoryCurvePresentation.historyNotice(coverage: coverage, range: selected))
+            XCTAssertTrue(notice.contains("首次开始记录时的系统时间"))
+            XCTAssertFalse(notice.contains("尚未记录"))
             XCTAssertEqual(HistoryCurveInteraction.time(at: .init(x: 254, y: 70), plot: plot, range: selected), start.addingTimeInterval(duration / 2))
             XCTAssertEqual(NetworkChartCoordinates.ticks, [0, 0.5, 1])
         }
-        XCTAssertNil(HistoryCurvePresentation.leadingUnrecorded(range: range, first: nil))
-        XCTAssertNil(HistoryCurvePresentation.leadingUnrecorded(range: range, first: start))
+        XCTAssertNil(HistoryCurvePresentation.historyNotice(coverage: .init(), range: range))
     }
 
     func testMergedBucketShowsItsRealIntervalRatherThanOneMinute() {

@@ -62,7 +62,7 @@ public struct BackgroundNetworkResponse: Codable, Sendable {
 public enum BackgroundNetworkWire {
     public static let maximumRequestBytes = 65_536
     public static let maximumResponseBytes = 4 * 1_048_576
-    public static let version = "0.5.6 (18)"
+    public static let version = "0.5.7 (19)"
     public static func encode(_ response: BackgroundNetworkResponse) throws -> Data {
         let data = try JSONEncoder().encode(response)
         guard data.count <= maximumResponseBytes else { throw Failure.responseTooLarge }

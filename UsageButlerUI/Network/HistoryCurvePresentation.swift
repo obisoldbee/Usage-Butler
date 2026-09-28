@@ -77,7 +77,9 @@ enum HistoryCurvePresentation {
 
     static func isPartial(_ point: HistoryCurveBucket, upload: Bool) -> Bool {
         let otherDirection: HistoryQuality = upload ? [.downloadGap, .downloadOverflow] : [.uploadGap, .uploadOverflow]
-        return !point.totals.quality.subtracting(otherDirection.union(.minuteBoundary)).isEmpty
+        // Retention age and whole-frame minute assignment say nothing about
+        // missing samples in this direction. Keep the original quality bits.
+        return !point.totals.quality.subtracting(otherDirection.union([.minuteBoundary, .conservativeAge])).isEmpty
             || observedSeconds(point, upload: upload) + 0.000001 < point.end.timeIntervalSince(point.start)
     }
 
@@ -99,18 +101,24 @@ enum HistoryCurvePresentation {
         return "每柱代表：" + spans.map { "\(Int($0 / 60)) 分钟" }.joined(separator: " / ") + "；选择后查看实际时段起止。"
     }
 
-    static func leadingUnrecorded(range: HistoryRange, first: Date?) -> HistoryRange? {
-        guard let first, first > range.start else { return nil }
-        return .init(start: range.start, end: min(first, range.end))
-    }
-
     static func historyNotice(coverage: HistoryCoverage, range: HistoryRange) -> String? {
         guard let first = coverage.firstCollectedAt else { return nil }
         let date = first.formatted(date: .abbreviated, time: .standard)
-        if leadingUnrecorded(range: range, first: first) != nil {
-            return "采集历史始于 \(date)；所选范围在此之前尚未记录，不代表零流量。"
+        let notice = "首次开始记录时的系统时间：\(date)"
+        // The first frame's wall time is not an absence boundary: valid records
+        // may precede it after a clock change, or just by minute bucketing.
+        if range.start < first {
+            return notice + "；更早时段以已保存的记录为准。"
         }
-        return "采集历史始于 \(date)"
+        return notice
+    }
+
+    static func emptyText(_ result: HistoryQueryResult) -> String {
+        if result.totalApplications > 0 { return "本页已无更多应用；范围内共有 \(result.totalApplications) 个应用，可继续查看下方活动或返回上一页。" }
+        if result.contract?.scope.search.isEmpty == false { return "没有符合搜索的应用，可清除搜索后查看此范围的历史。" }
+        if result.coverage.retentionTrimmed, let oldest = result.coverage.oldestRetainedAt, result.range.end <= oldest { return "此范围的记录已超出保留期限。" }
+        if result.coverage.unattributedSamples > 0 { return "此范围有源采样，但没有可归属应用的历史。" }
+        return "此范围没有已保存的应用观察；未知时段不能当作零流量。"
     }
 
     static let diagnosticsScope = "整个采集来源的诊断，未按当前应用或搜索筛选。无法归属计数是重复采样中的记录次数，不是此应用的连接数、流量或不同程序数。"
