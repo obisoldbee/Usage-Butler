@@ -21,6 +21,11 @@ public struct NetworkHistoryWindowRootView: View {
 
 struct NetworkHistoryView: View {
     @ObservedObject var model: BackgroundNetworkViewModel
+    @ObservedObject private var notes: ApplicationNoteStore
+    @State private var editingNote: ApplicationNoteTarget?
+    init(model: BackgroundNetworkViewModel) {
+        self.model = model; notes = model.applicationNotes
+    }
     @State private var preview: ProcessJSONDocument?
     @State private var showingPreview = false
     @State private var saving = false
@@ -33,7 +38,7 @@ struct NetworkHistoryView: View {
                     Button("应用汇总") { model.selectedApplication = nil }
                         .accessibilityIdentifier("network.history.back")
                 }
-                Text(model.result?.applications.first.flatMap { model.selectedApplication == nil ? nil : $0.identity.name } ?? "应用历史")
+                Text(model.result?.applications.first.flatMap { model.selectedApplication == nil ? nil : $0.identity }.map { notes.displayName(for: $0) } ?? "应用历史")
                     .font(.headline).lineLimit(1)
                 Spacer()
                 Button("刷新") { model.reload() }.disabled(model.loading)
@@ -67,6 +72,11 @@ struct NetworkHistoryView: View {
                     .accessibilityIdentifier("network.history.absoluteRange")
                 if model.selectedApplication != nil {
                     if let app = result.applications.first {
+                        HStack {
+                            ApplicationNameView(identity: app.identity, notes: notes)
+                            Spacer()
+                            noteButton(app.identity)
+                        }
                         HStack(spacing: 24) {
                             Label("已观察上传  " + NetworkPresentation.bytes(HistoryCurvePresentation.observedBytes(app.totals, upload: true)), systemImage: "arrow.up")
                                 .foregroundStyle(NetworkPresentation.uploadColor)
@@ -87,10 +97,11 @@ struct NetworkHistoryView: View {
                     }
                     Text("按已观察上传排序").font(.caption).foregroundStyle(.secondary)
                     ForEach(result.applications) { app in
+                        HStack(spacing: 12) {
                         Button { model.openApplication(app) } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(app.identity.name).lineLimit(1)
+                                    ApplicationNameView(identity: app.identity, notes: notes)
                                     if app.identityOrder == .legacyUnverified {
                                         Text("旧数据：身份顺序未验证").font(.caption2).foregroundStyle(.secondary)
                                     }
@@ -104,6 +115,8 @@ struct NetworkHistoryView: View {
                             .focusable(true).focused($focused, equals: .application(app.id))
                             .accessibilityIdentifier("network.history.row.\(app.id)")
                             .onAppear { restoreFocus(for: .application(app.id)) }
+                        noteButton(app.identity)
+                        }
                     }
                     if result.applications.isEmpty { Text(HistoryCurvePresentation.emptyText(result)).font(.callout).foregroundStyle(.secondary).padding(.vertical, 18) }
                 }
@@ -169,7 +182,7 @@ struct NetworkHistoryView: View {
         .background {
             if model.selectedApplication == nil {
                 ProcessListKeyboard { key in
-                    guard [UInt16(36), 49, 76].contains(key), !showingPreview, !saving, exportError == nil else { return false }
+                    guard [UInt16(36), 49, 76].contains(key), !showingPreview, !saving, exportError == nil, editingNote == nil else { return false }
                     switch focused {
                     case let .application(id):
                         guard let app = model.result?.applications.first(where: { $0.id == id }) else { return false }
@@ -188,6 +201,9 @@ struct NetworkHistoryView: View {
         .onAppear { if model.result == nil { model.reload() } }
         .onChange(of: model.returnFocus) { target in
             if let target { restoreFocus(for: target) }
+        }
+        .sheet(item: $editingNote) { target in
+            ApplicationNoteEditor(identity: target.identity, notes: notes)
         }
         .sheet(isPresented: $showingPreview) {
             VStack(alignment: .leading, spacing: 12) {
@@ -230,6 +246,13 @@ struct NetworkHistoryView: View {
             if c.recoveredUncleanSession { Text("上次服务未正常关闭：最后确认提交之后尚未保存的记录可能缺失。正常目标约每5秒提交，调度停顿可能延长；停机期间为未观察。") }
             if c.conservativeAge { Text("跨启动的离线时长无法核实，部分记录会保守多保留。") }
         }.font(.caption).foregroundStyle(.secondary)
+    }
+    private func noteButton(_ identity: ProcessNetworkApplicationIdentity) -> some View {
+        Button { editingNote = .init(identity: identity) } label: {
+            Label("备注", systemImage: "square.and.pencil")
+        }.buttonStyle(.borderless).font(.caption)
+            .accessibilityIdentifier("network.history.note.\(identity.key)")
+            .help("为 \(identity.name) 设置本机备注")
     }
     private func prepareExport() {
         guard let result = model.result else { return }

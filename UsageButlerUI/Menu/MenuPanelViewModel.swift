@@ -260,8 +260,8 @@ public final class MenuPanelViewModel: ObservableObject {
     @Published public private(set) var networkRateHistory = NetworkRateHistoryBuffer()
     public private(set) var networkHistoryRevision: UInt64 = 0
     private var networkChartCache = NetworkChartProjectionCache()
-    public let processNetwork = ProcessNetworkViewModel()
-    public let backgroundNetwork = BackgroundNetworkViewModel()
+    public let processNetwork: ProcessNetworkViewModel
+    public let backgroundNetwork: BackgroundNetworkViewModel
     public func applyProcessNetworkSnapshot(_ value: ProcessNetworkSnapshot) { processNetwork.apply(value) }
     /// Sticky user interface choice. A vanished interface stays selected and
     /// renders unavailable; the caliber never switches silently (NET-02).
@@ -322,10 +322,14 @@ public final class MenuPanelViewModel: ObservableObject {
     public init(
         snapshot: Stage3AppProjection,
         settingsProviders: [Stage3ProviderProjection]? = nil,
+        applicationNotes: ApplicationNoteStore? = nil,
         networkClock: @escaping () -> ClockReading = {
             .init(wallTime: Date(), monotonicTime: .init(nanoseconds: DispatchTime.now().uptimeNanoseconds))
         }
     ) {
+        let notes = applicationNotes ?? ApplicationNoteStore()
+        processNetwork = ProcessNetworkViewModel(applicationNotes: notes)
+        backgroundNetwork = BackgroundNetworkViewModel(applicationNotes: notes)
         self.networkClock = networkClock
         let fullSettings = (settingsProviders ?? snapshot.providers)
             .sorted { $0.id.canonicalOrder < $1.id.canonicalOrder }

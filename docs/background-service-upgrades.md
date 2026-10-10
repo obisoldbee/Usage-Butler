@@ -22,7 +22,9 @@ xcodebuild -project UsageButler.xcodeproj -scheme UsageButler \
   'ARCHS=arm64 x86_64' ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build
 ```
 
-`script/build_and_run.sh` 是 Debug 开发入口，默认签名与启动行为不构成正式升级流程。候选构建阶段不启动主应用或 helper，不触发后台注册。
+`script/build_and_run.sh` 是 Debug 开发入口，默认签名与启动行为不构成正式升级流程。它仍共用正式身份与资源，现已在任何停止/生成/构建/签名/启动前实行只读拒绝门，构建后签名前及启动前重查：正式安装存在（即使 GUI 退出）、同身份外部 GUI/任何独立 helper、正式服务 label、既有偏好/注册绑定或共享历史/缓存均拒绝；探测失败/未知也拒绝。所有入口及 fixture/network panel 均受此门约束，选择签名身份不会绕过它。脚本不停止正式安装或服务，不注销、删除数据或新增完整隔离模式。
+
+已有正式安装的开发主机可在任务专属 worktree 做源码与离线脚本测试；生产身份 Debug 只允许在没有上述占用的干净可恢复 macOS 测试环境中启动。首次运行产生的偏好/历史会使后续启动保守拒绝，保留结果后可恢复干净 VM 快照继续开发，不要求删除用户历史。检查允许无占用环境和精确属于本构建的 GUI 重建，但不提供跨入口的原子互斥，也不保护 Xcode 直接 Run/直接打开产物。正式升级必须另走下文合同。候选构建阶段不启动主应用或 helper，不触发后台注册。
 
 ## 同一身份与嵌套签名
 

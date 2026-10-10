@@ -62,7 +62,10 @@ public final class ProcessNetworkViewModel: ObservableObject {
     public var returnAnchor: String?
     private var revision: UInt64 = 0
     private var chartCache = NetworkChartProjectionCache()
-    public init() {}
+    public let applicationNotes: ApplicationNoteStore
+    public init(applicationNotes: ApplicationNoteStore? = nil) {
+        self.applicationNotes = applicationNotes ?? ApplicationNoteStore()
+    }
     public func apply(_ snapshot: ProcessNetworkSnapshot) {
         self.snapshot = snapshot; observationState = .observing(snapshot.state); revision &+= 1; rebuildRows()
         let now = DispatchTime.now().uptimeNanoseconds

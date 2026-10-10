@@ -92,6 +92,7 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 - Xcode（支持 Swift 6）
 - Swift 6
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) 2.45.4 或更高版本
+- Python 3（Debug 启动前的只读安全检查；Xcode Command Line Tools 提供）
 - 按需安装并登录以下本机 CLI：
   - `codex`：OpenAI Codex
   - `mmx`：MiniMax Token Plan
@@ -111,13 +112,22 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 # 生成工程并运行单元测试
 ./script/test.sh
 
-# 生成、构建并启动 Debug 应用
+# 离线验证 Debug 启动防护（所有构建、签名、启动、停止命令均为替身）
+python3 -B script/tests/test_debug_launch_guard.py
+
+# 仅在没有正式身份/资源占用的干净测试环境中生成、构建并启动 Debug
 ./script/build_and_run.sh
 ```
 
 `UsageButler.xcodeproj` 是生成产物，不纳入版本控制。
 
-构建启动脚本用于 Debug 开发，会先签内嵌后台程序，再签主应用并严格验证。默认使用本地ad-hoc签名；可用 `USAGE_BUTLER_CODESIGN_IDENTITY` 指定本机现有开发签名身份。正式后台升级必须沿用工作安装的身份，任何已尝试正式注册的包发生签名或打包返修都要递增 build；先验证候选，再经生产路径完成异步注销，最后替换整个包。具体门槛与恢复顺序见[后台升级流程](docs/background-service-upgrades.md)。开发签名不代表Developer ID分发或公证。
+构建启动脚本用于 Debug 开发，仍使用正式 bundle ID、服务 label、偏好和历史路径。它现在先执行只读检查；发现 `/Applications/Usage-Butler.app`、当前用户的同名安装、其它路径的同身份进程、独立 helper、正式服务 label、已有偏好或共享历史/缓存目录时，以状态码 **3** 拒绝，在停止进程、生成工程、构建、签名或启动之前退出。探测失败或身份未知也拒绝。GUI 已退出、仅 helper 运行或后台已停用，都不能证明这些资源可供开发版使用。
+
+无参数 `run`、`--debug`、`--logs`、`--telemetry`、`--verify`、`--panel`、`--fixture-panel`、`--network-panel` 及已有别名执行同一门槛。fixture/network 环境只改变运行组合，不提供身份隔离；指定相同签名也不解除冲突。构建结束后，脚本在签名前及启动前重查。检查只覆盖观测时点，不是防止其它入口并发启动的系统锁；Xcode 直接 Run 或直接打开生成的 App 也没有这个脚本门。
+
+开发主机已有正式安装时，使用任务专属 worktree 跑上面的源码/离线测试。需要启动 Debug 时，使用没有正式安装、服务、生产偏好和历史的可恢复 macOS 测试环境；例如从干净 VM 快照启动一次测试，保留该次结果，再恢复干净快照。这个门允许没有资源占用的开发启动及精确属于本构建的 GUI 重建；开发运行自身一旦留下后台/偏好/历史，后续启动也会保守拒绝。保留现有用户数据，不通过退出正式 GUI、杀 helper、删偏好/历史或绕过检查来续跑。本入口没有新增完整隔离模式。
+
+检查通过后，会先签内嵌后台程序，再签主应用并严格验证。默认使用本地ad-hoc签名；可用 `USAGE_BUTLER_CODESIGN_IDENTITY` 指定本机现有开发签名身份。正式后台升级必须沿用工作安装的身份，任何已尝试正式注册的包发生签名或打包返修都要递增 build；先验证候选，再经生产路径完成异步注销，最后替换整个包。具体门槛与恢复顺序见[后台升级流程](docs/background-service-upgrades.md)。开发签名不代表Developer ID分发或公证。
 
 ## 隐私与本地数据
 

@@ -6,7 +6,7 @@ if (( $# > 1 )); then
   exit 2
 fi
 
-MODE="${1:-run}"
+MODE="${1-run}"
 case "$MODE" in
   run|--debug|debug|--logs|logs|--telemetry|telemetry|--verify|verify|--panel|--fixture-panel|--network-panel) ;;
   *)
@@ -27,6 +27,19 @@ APP_BUNDLE="$DERIVED_DATA_PATH/Build/Products/$CONFIGURATION/$APP_NAME.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 HELPER_BINARY="$APP_BUNDLE/Contents/MacOS/UsageButlerNetworkAgent"
 SIGNING_IDENTITY="${USAGE_BUTLER_CODESIGN_IDENTITY:--}"
+
+debug_launch_preflight() {
+  if ! command -v python3 >/dev/null 2>&1 || [[ ! -r "$SOURCE_ROOT/script/debug_launch_guard.py" ]]; then
+    echo "Debug launch refused: the read-only safety probe requires Python 3 and script/debug_launch_guard.py." >&2
+    echo "Next: restore the probe/runtime, or use script/test.sh for source-only validation." >&2
+    return 3
+  fi
+  python3 -B "$SOURCE_ROOT/script/debug_launch_guard.py" --app-binary "$APP_BINARY"
+}
+
+# All modes, including fixture/network panels, retain production identity.
+# Refuse before process stops, project generation, build, signing or launch.
+debug_launch_preflight
 
 resolve_xcodegen() {
   if command -v xcodegen >/dev/null 2>&1; then
@@ -117,6 +130,8 @@ build_app() {
     build
   [[ -x "$APP_BINARY" ]]
   [[ -x "$HELPER_BINARY" ]]
+  # A formal installation/service may have appeared while the build ran.
+  debug_launch_preflight
   # The background service and authenticated IPC require valid embedded code.
   # Keep identifiers stable; use one identity for helper and containing App.
   /usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --timestamp=none \
@@ -178,6 +193,7 @@ verify_process() {
 stop_running_app
 generate_project
 build_app
+debug_launch_preflight
 
 case "$MODE" in
   run)

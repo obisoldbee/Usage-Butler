@@ -154,7 +154,8 @@ final class AppRuntime: ObservableObject {
                         origin: .runtime
                     )
                 ),
-                settingsProviders: settingsProviders
+                settingsProviders: settingsProviders,
+                applicationNotes: ApplicationNoteStore(defaults: defaults)
             )
         }
 

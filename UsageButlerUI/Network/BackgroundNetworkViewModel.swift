@@ -67,8 +67,10 @@ public final class BackgroundNetworkViewModel: ObservableObject {
     private var restoringSummary = false
     private let now: () -> Date
     private let pause: @MainActor (Duration) async throws -> Void
-    public init(now: @escaping () -> Date = { Date() },
+    public let applicationNotes: ApplicationNoteStore
+    public init(applicationNotes: ApplicationNoteStore? = nil, now: @escaping () -> Date = { Date() },
                 pause: @escaping @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
+        self.applicationNotes = applicationNotes ?? ApplicationNoteStore()
         self.now = now; self.pause = pause
     }
     public var serviceTitle: String {

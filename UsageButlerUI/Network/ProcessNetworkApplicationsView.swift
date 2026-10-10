@@ -7,6 +7,11 @@ import UsageButlerDomain
 struct ProcessNetworkApplicationsView: View {
     @ObservedObject var model: ProcessNetworkViewModel
     let now: Date
+    @ObservedObject private var notes: ApplicationNoteStore
+    @State private var editingNote: ApplicationNoteTarget?
+    init(model: ProcessNetworkViewModel, now: Date) {
+        self.model = model; self.now = now; notes = model.applicationNotes
+    }
     @FocusState private var focusedApp: String?
     @State private var preview: ProcessJSONDocument?
     @State private var showPreview = false
@@ -21,6 +26,9 @@ struct ProcessNetworkApplicationsView: View {
                     Text("此观察已结束，或历史未被保留。")
                 }
             } else { list }
+        }
+        .sheet(item: $editingNote) { target in
+            ApplicationNoteEditor(identity: target.identity, notes: notes)
         }
         .sheet(isPresented: $showPreview) {
             VStack(alignment: .leading, spacing: 12) {
@@ -77,6 +85,7 @@ struct ProcessNetworkApplicationsView: View {
                 ScrollView {
                     LazyVStack(spacing: 2) {
                         ForEach(model.rows, id: \.identity.key) { app in
+                            HStack(spacing: 5) {
                             Button { model.open(app.identity.key) } label: { row(app) }
                                 .buttonStyle(.plain).id(app.identity.key)
                                 .focusable(true)
@@ -92,6 +101,8 @@ struct ProcessNetworkApplicationsView: View {
                                         }
                                     }
                                 }
+                            noteButton(app.identity)
+                            }
                         }
                         if model.rows.isEmpty {
                             Text(model.search.isEmpty ? "当前没有可显示的应用观察。" : "没有匹配的应用或进程。")
@@ -106,7 +117,7 @@ struct ProcessNetworkApplicationsView: View {
                 }
             }
             .background(ProcessListKeyboard { key in
-                guard [UInt16(36), 49].contains(key), let app = focusedApp,
+                guard [UInt16(36), 49].contains(key), editingNote == nil, !showPreview, !saving, exportError == nil, let app = focusedApp,
                       model.rows.contains(where: { $0.identity.key == app }) else { return false }
                 model.open(app); return true
             })
@@ -134,7 +145,7 @@ struct ProcessNetworkApplicationsView: View {
             Image(systemName: model.watched.contains(app.identity.key) ? "star.fill" : app.identity.bundleID == nil ? "terminal" : "app")
                 .foregroundStyle(model.watched.contains(app.identity.key) ? Color.orange : .secondary)
             VStack(alignment: .leading, spacing: 3) {
-                Text(app.identity.name).font(.callout.weight(.medium)).lineLimit(1)
+                ApplicationNameView(identity: app.identity, notes: notes).font(.callout.weight(.medium))
                 Text(presence(app)).font(.caption2).foregroundStyle(.secondary)
                 Text("本段 ↑ \(NetworkPresentation.bytes(app.total.upload.bytes)) · ↓ \(NetworkPresentation.bytes(app.total.download.bytes))")
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
@@ -167,7 +178,11 @@ struct ProcessNetworkApplicationsView: View {
                 Button("导出预览") { prepareExport(detail: app.identity.key) }
                     .accessibilityIdentifier("network.apps.detailExport")
             }
-            Text(app.identity.name).font(.headline).textSelection(.enabled)
+            HStack {
+                ApplicationNameView(identity: app.identity, notes: notes).font(.headline)
+                Spacer()
+                noteButton(app.identity)
+            }
             Text(presence(app)).font(.caption).foregroundStyle(.secondary)
             status
             Text(NetworkStatusRules.applicationSegmentText(app.total.upload, direction: String(localized: "上传累计")))
@@ -214,6 +229,13 @@ struct ProcessNetworkApplicationsView: View {
         case .executable: "独立可执行文件；没有已核验的应用 Bundle 归属"
         case .unknown: "系统启动身份未确认；保持独立的未知进程"
         }
+    }
+    private func noteButton(_ identity: ProcessNetworkApplicationIdentity) -> some View {
+        Button { editingNote = .init(identity: identity) } label: {
+            Image(systemName: "square.and.pencil")
+        }.buttonStyle(.borderless).accessibilityLabel("备注：" + identity.name)
+            .accessibilityIdentifier("network.apps.note.\(identity.key)")
+            .help("设置本机备注")
     }
     private func prepareExport(detail: String?) {
         guard let snapshot = model.snapshotForExport else { return }
