@@ -2,6 +2,7 @@ public enum ProviderID: String, CaseIterable, Codable, Hashable, Identifiable, S
     case openAI
     case miniMax
     case ark
+    case grokBot
 
     public var id: String { rawValue }
 
@@ -10,6 +11,7 @@ public enum ProviderID: String, CaseIterable, Codable, Hashable, Identifiable, S
         case .openAI: 0
         case .miniMax: 1
         case .ark: 2
+        case .grokBot: 3
         }
     }
 }

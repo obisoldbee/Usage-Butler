@@ -50,6 +50,12 @@ public protocol ProviderAdapter: Actor {
     nonisolated var id: ProviderID { get }
     nonisolated var capabilities: ProviderCapabilities { get }
 
+    nonisolated var retainsDataWhenDisabled: Bool { get }
+    func setAccessEnabled(_ enabled: Bool) async
+    func setAccessEnabled(_ enabled: Bool, generation: UInt64) async
+    /// Before network I/O, resolve current identity and request removal of incompatible last-good.
+    func prepareForRead(retaining source: ProviderSourceIdentity?) async -> Bool
+    func mayRetainLastGoodAfterRead() async -> Bool
     func discover() async -> DiscoveryResult
     func read(scope: ProviderScope) async -> ProviderReadResult
     /// Invalidates any adapter-owned authentication observation cache before
@@ -64,6 +70,11 @@ public protocol ProviderAdapter: Actor {
 }
 
 public extension ProviderAdapter {
+    nonisolated var retainsDataWhenDisabled: Bool { true }
+    func setAccessEnabled(_ enabled: Bool) async {}
+    func setAccessEnabled(_ enabled: Bool, generation: UInt64) async { await setAccessEnabled(enabled) }
+    func prepareForRead(retaining source: ProviderSourceIdentity?) async -> Bool { false }
+    func mayRetainLastGoodAfterRead() async -> Bool { true }
     func invalidateAuthenticationCache() async {}
     func authenticationAfterRead() async -> AuthenticationState? { nil }
 }

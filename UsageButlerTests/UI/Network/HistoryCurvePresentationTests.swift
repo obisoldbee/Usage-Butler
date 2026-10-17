@@ -98,7 +98,7 @@ final class HistoryCurvePresentationTests: XCTestCase {
         point.totals.downloadObservedMicroseconds = 0
         XCTAssertEqual(HistoryCurvePresentation.average(point, upload: true), 0)
         XCTAssertEqual(HistoryCurvePresentation.observedBytes(point.totals, upload: true), 0)
-        XCTAssertTrue(HistoryCurvePresentation.observation(point, upload: true).contains("已观察为零"))
+        XCTAssertTrue(HistoryCurvePresentation.observation(point, upload: true).contains("零流量"))
         XCTAssertNil(HistoryCurvePresentation.average(point, upload: false))
         XCTAssertNil(HistoryCurvePresentation.peak(point.totals, upload: false))
         XCTAssertNil(HistoryCurvePresentation.observedBytes(point.totals, upload: false))
@@ -155,7 +155,7 @@ final class HistoryCurvePresentationTests: XCTestCase {
             let actualStart = start.addingTimeInterval(duration * 0.75)
             var coverage = HistoryCoverage(); coverage.firstCollectedAt = actualStart
             let notice = try XCTUnwrap(HistoryCurvePresentation.historyNotice(coverage: coverage, range: selected))
-            XCTAssertTrue(notice.contains("首次开始记录时的系统时间"))
+            XCTAssertTrue(notice.contains("首次记录时的系统时间"))
             XCTAssertFalse(notice.contains("尚未记录"))
             XCTAssertEqual(HistoryCurveInteraction.time(at: .init(x: 254, y: 70), plot: plot, range: selected), start.addingTimeInterval(duration / 2))
             XCTAssertEqual(NetworkChartCoordinates.ticks, [0, 0.5, 1])
@@ -169,5 +169,26 @@ final class HistoryCurvePresentationTests: XCTestCase {
         XCTAssertTrue(HistoryCurvePresentation.granularity([point]).contains("56 分钟"))
         XCTAssertEqual(HistoryCurvePresentation.bucket(at: point.end.addingTimeInterval(-1), in: [point]), point)
         XCTAssertNil(HistoryCurvePresentation.bucket(at: point.end, in: [point]))
+    }
+}
+
+
+extension HistoryCurvePresentationTests {
+    func testLineNeverBridgesUnknownOrMissingMinutesAndPreservesObservedZero() {
+        let points = [bucket(0), bucket(1, upload: 0), bucket(2, upload: nil), bucket(3), bucket(5)]
+        let line = HistoryCurvePresentation.linePoints(points, upload: true)
+        XCTAssertEqual(line.map(\.series), [1, 1, 1, 1, 2, 2, 3, 3])
+        XCTAssertEqual(line.map(\.rate), [2, 2, 0, 0, 2, 2, 2, 2])
+        XCTAssertFalse(line.contains { $0.date > points[3].end && $0.date < points[4].start })
+        XCTAssertEqual(HistoryCurvePresentation.linePoints([points[2]], upload: false).map(\.rate), [10, 10])
+    }
+    func testLineUsesObservedAverageWithoutChangingPeaksOrShortDuration() {
+        let point = bucket(0, upload: 10_000_000, observed: 2_500_000)
+        let line = HistoryCurvePresentation.linePoints([point], upload: true)
+        XCTAssertEqual(line.map(\.rate), [4_000_000, 4_000_000])
+        XCTAssertTrue(line.allSatisfy(\.partial))
+        XCTAssertEqual(point.totals.upload, 10_000_000)
+        XCTAssertEqual(point.totals.peakUpload, 20)
+        XCTAssertEqual(point.totals.uploadObservedMicroseconds, 2_500_000)
     }
 }

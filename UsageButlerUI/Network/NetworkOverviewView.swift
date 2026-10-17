@@ -50,7 +50,7 @@ struct NetworkOverviewView: View {
                 }
                 if !model.isFixtureMode {
                     HStack {
-                        Text("后台保存已观察记录，默认14天").font(.caption2).foregroundStyle(.secondary)
+                        Text(model.backgroundNetwork.serviceTitle).font(.caption2).foregroundStyle(.secondary)
                         Spacer()
                         Button("查看历史") { model.backgroundNetwork.onOpenHistory?() }
                             .accessibilityIdentifier("network.history.openWindow")
@@ -134,18 +134,7 @@ struct NetworkTrendView: View {
         let downloadPeak = frame.downloadPeak
         return VStack(alignment: .leading, spacing: 10) {
             Text("流量趋势").font(.subheadline.weight(.semibold))
-            HStack(spacing: 3) {
-                ForEach(NetworkTrendRange.allCases) { option in
-                    Button { range = option } label: {
-                        Text(option.title).font(.system(size: 11)).frame(maxWidth: .infinity, minHeight: 32)
-                            .background(range == option ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                            .foregroundStyle(range == option ? Color.white : Color.primary)
-                            // Plain buttons otherwise only hit-test the text in an unselected cell.
-                            .contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityIdentifier("network.range.\(option.rawValue)")
-                        .accessibilityAddTraits(range == option ? .isSelected : [])
-                }
-            }.padding(3).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+            NetworkRangeSelector(range: $range).padding(3).background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
             direction(.upload, now: now, points: frame.uploadPoints, current: stale ? nil : rate?.uploadBytesPerSecond,
                       total: total?.upload, peak: uploadPeak, bound: uploadAxis.upperBound, samples: samples)
             Divider()
@@ -155,7 +144,7 @@ struct NetworkTrendView: View {
                 .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                 .lineLimit(1).frame(height: 16, alignment: .leading)
                 .accessibilityIdentifier("network.inspection")
-            Text("独立缩放：上下两图等高不代表等速").font(.caption2).foregroundStyle(.secondary)
+            Text("两张图使用各自的刻度").font(.caption2).foregroundStyle(.secondary)
         }
         .padding(12).background(.background, in: RoundedRectangle(cornerRadius: 12))
         .overlay { RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.55)).allowsHitTesting(false) }
@@ -198,7 +187,7 @@ struct NetworkTrendView: View {
                 safeBound: safeBound, inspection: inspection, lastSample: samples.last?.sampledAt)
                 .equatable()
             .frame(height: 112)
-            .overlay { if points.isEmpty { Text("暂无已知速率 · 未采样区间留空").font(.caption2).foregroundStyle(.secondary) } }
+            .overlay { if points.isEmpty { Text("暂无速率记录 · 未采样区间留空").font(.caption2).foregroundStyle(.secondary) } }
             .accessibilityLabel("\(title)趋势，单位字节每秒，独立纵轴")
             .accessibilityValue("当前 \(NetworkPresentation.rate(current))，峰值 \(NetworkPresentation.rate(peak))")
             .accessibilityIdentifier("network.chart.\(direction.rawValue)")
@@ -206,8 +195,8 @@ struct NetworkTrendView: View {
     }
 
     private func totalText(_ total: DirectionByteTotal?) -> String {
-        guard let total else { return "本段累计：未知，等待基线" }
-        let since = total.since.map { "自 \($0.formatted(date: .omitted, time: .standard))" } ?? "起点未校验"
+        guard let total else { return "本段累计：未知，等待新的读数" }
+        let since = total.since.map { "自 \($0.formatted(date: .omitted, time: .standard))" } ?? "开始时间未知"
         return "本段累计 \(NetworkPresentation.bytes(total.bytes)) · \(since)"
     }
 

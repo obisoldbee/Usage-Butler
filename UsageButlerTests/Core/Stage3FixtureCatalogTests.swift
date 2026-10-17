@@ -7,8 +7,8 @@ import XCTest
 final class Stage3FixtureCatalogTests: XCTestCase {
     private let fixedNow = Date(timeIntervalSince1970: 1_786_300_000)
 
-    func testAllProvidersAreEnabledByDefault() {
-        XCTAssertEqual(ProviderDefaults.initiallyEnabled, Set(ProviderID.allCases))
+    func testOriginalProvidersDefaultOnAndGrokBotRequiresConsent() {
+        XCTAssertEqual(ProviderDefaults.initiallyEnabled, [.openAI, .miniMax, .ark])
     }
 
     func testFirstRunFixtureStartsAllProvidersInDetectingWithoutQuota() {

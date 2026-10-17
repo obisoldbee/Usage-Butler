@@ -18,7 +18,7 @@ final class PresentationTests: XCTestCase {
     func testProviderNamesMatchProductCopy() {
         XCTAssertEqual(
             ProviderID.allCases.map(ProviderPresentation.displayName),
-            ["OpenAI", "MiniMax", "火山方舟"]
+            ["OpenAI", "MiniMax", "火山方舟", "Grok Bot"]
         )
     }
 
@@ -36,7 +36,7 @@ final class PresentationTests: XCTestCase {
                 .authorizationNotRenewed,
                 for: .ark
             ),
-            "火山方舟 登录流程已结束，但授权到期时间未更新"
+            "火山方舟 登录已结束，授权到期时间尚未更新，请重试"
         )
     }
 
@@ -52,18 +52,19 @@ final class PresentationTests: XCTestCase {
         XCTAssertEqual(Set(symbolNames).count, symbolNames.count)
         XCTAssertEqual(
             symbolNames,
-            ["circle.hexagongrid.fill", "waveform", "mountain.2.fill"]
+            ["circle.hexagongrid.fill", "waveform", "mountain.2.fill", "bolt.horizontal.circle"]
         )
     }
 
-    func testImageAssetNamesAreUniqueAndPackageAllProviders() {
+    func testImageAssetNamesAreUniqueAndOriginalLogosRemainPackaged() {
+        XCTAssertNil(ProviderPresentation.imageAssetName(for: .grokBot))
         let assetNames = ProviderID.allCases.compactMap(
             ProviderPresentation.imageAssetName(for:)
         )
         XCTAssertEqual(
             assetNames.count,
-            ProviderID.allCases.count,
-            "Every provider must have an asset catalog entry"
+            3,
+            "The original CLI providers retain their packaged logos; Grok Bot uses a neutral symbol"
         )
         XCTAssertEqual(Set(assetNames).count, assetNames.count,
                        "Provider asset names must be unique")
@@ -79,7 +80,7 @@ final class PresentationTests: XCTestCase {
                     origin: .inferred(ruleID: "minimax-video-daily-v1")
                 )
             ),
-            "Max，根据视频权益推断"
+            "Max，根据视频额度推测"
         )
         XCTAssertEqual(
             PlanBadgePresentation.accessibilityLabel(

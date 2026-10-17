@@ -2,22 +2,23 @@
 
 Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI 编程订阅的额度状态、刷新时间、本机内存和应用网络活动。
 
-> 当前官方支持范围仅覆盖以下 **4 类订阅/套餐的额度展示**：
->
-> 1. OpenAI Codex
-> 2. MiniMax Token Plan
-> 3. 火山方舟 Agent Plan
-> 4. 火山方舟 Coding Plan
->
-> 它们来自 **3 个 Provider**：OpenAI、MiniMax 和火山方舟。OpenAI CLI 实际返回的 Codex Spark 或其他未知额度桶，可能作为 Codex 概览的明细出现，但不构成新增的官方支持订阅。
+当前支持以下额度来源：
+
+1. OpenAI Codex
+2. MiniMax Token Plan
+3. 火山方舟 Agent Plan / Coding Plan
+4. Grok Bot，通过本机 Cursor 登录来源读取 Grok / Cursor 共享周额度
+
+OpenAI CLI 返回的 Codex Spark 或其他额度桶，可作为 Codex 概览明细出现。Grok Bot 默认关闭，需在设置中明确授权读取 Cursor 登录来源。
 
 本项目只读取和展示额度信息，不提供订阅购买、升级或额度重置能力。
 
 ## 当前能力
 
-- 从本机 Provider CLI 读取订阅额度，并展示数据新鲜度与刷新状态。
+- 通过本机 Provider CLI 或已授权的 Cursor 登录来源读取额度，展示数据新鲜度与刷新状态。Grok / Cursor 共享周额度独立于月额外用量和积分显示。
+- 通用设置中的“额度展示方式”可选择跟随来源、统一已用或统一剩余，立即作用于所有额度百分比行并在本机保存。颜色始终按可用份额显示，换算及边界见[额度展示合同](docs/specs/quota-display-mode.md)。
 - 显示系统内存概览和有界的本地历史记录。
-- 观察系统可见应用的网络收发速率、分段累计与有界历史，独立保留接口趋势。
+- 观察系统可见应用的网络收发速率、分段累计，持续保存后台分钟历史并支持按截止日期查询；接口趋势独立保留。
 - 面板按当前内容自适应高度，超过屏幕可用高度时滚动；切换额度与内存页、显示更多套餐时自动调整。
 - 失败时显示重试状态；设置中的脱敏诊断保留最近 7 天、最多 200 条失败与恢复记录。MiniMax 记录字段校验原因和白名单数值，不保存原始输出或账号凭据。
 - 菜单栏芯片图标按内存压力显示绿、黄、红；状态未知或数据失效时显示灰色。
@@ -26,6 +27,8 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 - Provider 不可用、未登录或数据过期时，显示明确状态，不伪造可用额度。
 
 ## 网络观察 v2
+
+以下记录各版本发布时的行为。当前后台分钟历史持续保留，旧版0.5.0的14天自动清理策略已由持续保留取代；实时曲线和历史查询仍有各自的时间范围与资源边界。
 
 0.3.0（3）新增原生上下行分区独立刻度、五档范围、共享游标、源侧两小时有界历史与各方向独立累计起点。0.3.1（4）修复普通应用读取系统字节数的 32 位截断，改用公开 IFMIB 的完整计数；历史提醒只针对所选范围内的实际中断，裸 Tab 可从网络页返回额度。0.3.2（5）修正时间范围按钮的完整点击区域，把接口选择和统计说明移到独立网络设置页，取消主面板折叠和游标导致的高度变化。0.3.3（6）修复跨异步操作的启停、接口当前存在状态、路径单调时效、设置演示标识及峰值零/未知语义；图表保留稳定点/段身份，缓存投影并独立更新游标。
 
@@ -101,6 +104,8 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 
 各 CLI 由对应项目独立提供和授权，本仓库不包含这些 CLI，也不代替其登录流程。
 
+使用 Grok / Cursor 共享额度时，需要本机 Cursor 已有有效登录，并在额度管家设置中明确启用 Grok Bot。该来源直接通过 HTTPS 查询官方身份与用量接口。
+
 ## 构建与验证
 
 在仓库根目录执行：
@@ -132,7 +137,7 @@ python3 -B script/tests/test_debug_launch_guard.py
 ## 隐私与本地数据
 
 - 应用和仓库不内置 Provider token、API key、Cookie 或用户登录资料。
-- Provider 登录状态由本机的 `codex`、`mmx` 和 `arkcli` 管理。调用这些 CLI 时，CLI 可能按照其自身行为连接对应 Provider 网络。
+- OpenAI、MiniMax、火山方舟登录状态由本机 `codex`、`mmx`、`arkcli` 管理，CLI 可能连接对应 Provider 网络。Grok Bot 仅在明确启用后只读访问指定 Cursor 会话键，会话只在内存中使用；规范化额度缓存按会话关联加密保存。
 - 规范化后的额度缓存写入 `~/Library/Application Support/Usage-Butler/quota-cache/v1/`。
 - 内存历史写入 `~/Library/Application Support/Usage-Butler/memory-history/v1/`。
 - 应用网络分钟历史保存在 `~/Library/Application Support/io.github.obisoldbee.UsageButler/NetworkHistory/history-v1.sqlite`；后台遵循当前用户的系统批准和停止意图。数据包含本地应用身份、已观察字节与覆盖状态，不保存网络载荷或连接目标。

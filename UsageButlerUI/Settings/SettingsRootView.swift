@@ -13,6 +13,8 @@ public struct SettingsRootView: View {
     private var quotaAlertsEnabled = true
     @AppStorage(ProviderPreferenceKey.larkQuotaAlertChatID)
     private var larkChatID = ""
+    @AppStorage(QuotaDisplayMode.preferenceKey)
+    private var storedQuotaDisplayMode = QuotaDisplayMode.source.rawValue
     @State private var feedback: String?
     @State private var showingDiagnostics = false
 
@@ -33,10 +35,12 @@ public struct SettingsRootView: View {
             .frame(width: 260)
             .padding(16)
             .accessibilityIdentifier("settings.page")
-            Text(model.settingsSourceDisclosure)
-                .font(.caption).foregroundStyle(.secondary).padding(.bottom, 12)
-                .accessibilityLabel(model.settingsSourceDisclosure)
-                .accessibilityIdentifier("settings.sourceDisclosure")
+            if model.isFixtureMode {
+                Text(model.settingsSourceDisclosure)
+                    .font(.caption).foregroundStyle(.secondary).padding(.bottom, 12)
+                    .accessibilityLabel(model.settingsSourceDisclosure)
+                    .accessibilityIdentifier("settings.sourceDisclosure")
+            }
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -96,7 +100,7 @@ public struct SettingsRootView: View {
 
     private var generalSection: some View {
         SettingsSection(title: "通用") {
-            SettingsRow(title: String(localized: "默认刷新频率"), subtitle: String(localized: "可选 1、5、15、30 分钟或仅手动")) {
+            SettingsRow(title: String(localized: "默认刷新频率"), subtitle: nil) {
                 Picker("默认刷新频率", selection: $globalRefreshSeconds) {
                     Text("1 分钟").tag(60)
                     Text("5 分钟").tag(300)
@@ -115,8 +119,28 @@ public struct SettingsRootView: View {
 
             Divider()
 
-            SettingsRow(title: String(localized: "额度刷新行为"), subtitle: String(localized: "只读取额度状态，不发起模型调用")) {
-                Text("仅读取额度状态")
+            SettingsRow(
+                title: String(localized: "额度展示方式"),
+                subtitle: String(localized: "仅调整本地显示，颜色按可用额度")
+            ) {
+                Picker("额度展示方式", selection: Binding(
+                    get: { QuotaDisplayMode.validated(storedValue: storedQuotaDisplayMode) },
+                    set: { storedQuotaDisplayMode = $0.rawValue }
+                )) {
+                    ForEach(QuotaDisplayMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 270)
+                .accessibilityIdentifier("settings.quotaDisplayMode")
+            }
+
+            Divider()
+
+            SettingsRow(title: String(localized: "额度刷新"), subtitle: nil) {
+                Text("只读取用量，不调用模型")
                     .foregroundStyle(.secondary)
             }
 
@@ -128,7 +152,7 @@ public struct SettingsRootView: View {
                     Task { @MainActor in
                         switch await model.clearQuotaCache() {
                         case .completed:
-                            feedback = String(localized: "额度缓存清除请求已完成")
+                            feedback = String(localized: "已提交清除缓存请求")
                         #if USAGE_BUTLER_FIXTURES
                         case .offlineFixture:
                             feedback = String(localized: "本地 Fixture 没有用户额度缓存")
@@ -185,8 +209,8 @@ public struct SettingsRootView: View {
 
             Divider()
 
-            SettingsRow(title: String(localized: "查看脱敏诊断…")) {
-                Button("查看脱敏诊断…") {
+            SettingsRow(title: String(localized: "诊断信息…")) {
+                Button("诊断信息…") {
                     showingDiagnostics = true
                     Task { @MainActor in
                         await model.loadSafeDiagnostics()
@@ -236,23 +260,23 @@ public struct SettingsRootView: View {
     private var larkQuotaAlertStatusDetail: String {
         switch model.larkQuotaAlertChannelStatus {
         case .notChecked, .checking:
-            return String(localized: "检测本地 lark-cli 状态与接收会话配置")
+            return String(localized: "检查飞书连接和接收会话")
         case .ready:
             return quotaAlertsEnabled
-                ? String(localized: "飞书 Bot 已就绪；额度提醒会同时尝试系统通知与飞书推送")
-                : String(localized: "飞书 Bot 已就绪；额度提醒当前已关闭")
+                ? String(localized: "飞书提醒已就绪")
+                : String(localized: "额度提醒已关闭")
         case .needsChatID:
             return quotaAlertsEnabled
-                ? String(localized: "飞书 Bot 已就绪，但未配置接收会话 ID（请填写下方飞书会话 ID）")
-                : String(localized: "飞书 Bot 已就绪；额度提醒当前已关闭")
+                ? String(localized: "请填写下方的飞书会话 ID")
+                : String(localized: "额度提醒已关闭")
         case .needsSetup:
             return quotaAlertsEnabled
-                ? String(localized: "飞书 Bot 未就绪：请在终端检查 lark-cli 登录与 Bot 授权")
-                : String(localized: "飞书 Bot 未就绪；额度提醒当前已关闭")
+                ? String(localized: "飞书机器人尚未就绪，请在终端检查登录和授权")
+                : String(localized: "额度提醒已关闭")
         case .unavailable:
             return quotaAlertsEnabled
                 ? String(localized: "未能使用 lark-cli；请检查是否已安装 lark-cli 并加入 PATH")
-                : String(localized: "未能使用 lark-cli；额度提醒当前已关闭")
+                : String(localized: "额度提醒已关闭")
         }
     }
 
@@ -261,12 +285,13 @@ public struct SettingsRootView: View {
             GlobalShortcutSettingsRow(model: model)
                 .padding(12)
             VStack(alignment: .leading, spacing: 5) {
-                Text("打开设置：⌘⇧,（Command + Shift + 逗号）")
-                Text("后台运行时也可直接打开设置；已有设置窗口会前置。此快捷键独立于面板快捷键。")
+                Text("打开设置  ⌘⇧,")
+                Text("刷新  ⌘R    退出主程序  ⌘Q")
+                Text("后台运行时也可打开设置。")
                     .font(.caption).foregroundStyle(.secondary)
-                if let issue = model.panelShortcutIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
-                if let issue = model.settingsShortcutIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
-                if let issue = model.settingsOpeningIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
+                if let issue = model.panelShortcutIssue { Text(ShortcutErrorCopy.displayText(issue)).help(issue).font(.caption).foregroundStyle(.orange) }
+                if let issue = model.settingsShortcutIssue { Text(ShortcutErrorCopy.displayText(issue)).help(issue).font(.caption).foregroundStyle(.orange) }
+                if let issue = model.settingsOpeningIssue { Text(ShortcutErrorCopy.displayText(issue)).help(issue).font(.caption).foregroundStyle(.orange) }
             }.padding(12)
         }
     }
@@ -312,7 +337,7 @@ public struct SettingsRootView: View {
             }
 
             Divider()
-            Text("关闭后从额度面板隐藏；不会退出登录或删除缓存")
+            Text("关闭后从额度面板隐藏。Grok Bot 同时撤销会话授权、取消请求并清除本次读数。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
@@ -330,22 +355,9 @@ public struct SettingsRootView: View {
                 VStack(alignment: .leading) {
                     Text("额度管家")
                         .font(.headline)
-                    Text("菜单栏中的额度、内存与网络概览")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text("\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "—"))")
-                    .foregroundStyle(.secondary)
-            }
-            .padding(12)
-
-            Divider()
-
-            HStack {
-                Text("键盘快捷键")
-                Spacer()
-                Text(String(localized: "⌘⇧, 设置    ⇧⌘P 面板    ⌘R 刷新    ⌘Q 退出"))
                     .foregroundStyle(.secondary)
             }
             .padding(12)
@@ -357,14 +369,14 @@ public struct SettingsRootView: View {
                 Spacer()
             }
             .padding(12)
-            Text("退出主程序不关闭已开启的后台采集；停止后台请到“网络”设置。")
+            Text("退出主程序后，已开启的后台记录会继续。")
                 .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12)
         }
     }
 
     private var diagnosticsSheet: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("脱敏诊断")
+            Text("诊断信息")
                 .font(.title2.weight(.semibold))
             Text(diagnosticsSummary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -393,18 +405,18 @@ public struct SettingsRootView: View {
     private var diagnosticsContent: some View {
         switch model.safeDiagnosticsState {
         case .idle:
-            Text("尚未读取实时脱敏诊断。")
+            Text("尚未读取诊断信息。")
                 .foregroundStyle(.secondary)
         case .loading:
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("正在读取脱敏诊断…")
+                Text("正在读取诊断信息…")
             }
             .foregroundStyle(.secondary)
         case let .loaded(diagnostics):
             if diagnostics.isEmpty {
-                Text("当前运行时没有返回实时脱敏诊断。")
+                Text("暂未读取到诊断信息，请重试。")
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 16) {
@@ -475,7 +487,7 @@ public struct SettingsRootView: View {
             return String(localized: "当前为本地 Fixture；没有实时 Provider 诊断，也不会调用 codex、mmx 或 arkcli。")
         #endif
         case .runtimeCompositionUnavailable:
-            return String(localized: "当前运行时组合不可用，因此没有实时 Provider 诊断可显示。")
+            return String(localized: "额度服务尚未就绪，暂时没有诊断信息。")
         }
     }
 
@@ -484,9 +496,9 @@ public struct SettingsRootView: View {
     ) -> String {
         switch reason {
         case .actionUnavailable:
-            return String(localized: "脱敏诊断动作尚未连接。")
+            return String(localized: "暂时无法读取诊断信息，请重试。")
         case .runtimeShuttingDown:
-            return String(localized: "额度管家正在退出，无法读取脱敏诊断。")
+            return String(localized: "正在退出，暂时无法读取诊断信息。")
         }
     }
 
@@ -496,7 +508,7 @@ public struct SettingsRootView: View {
             return String(localized: "当前为本地 Fixture；未调用 codex、mmx 或 arkcli，也没有读取账号身份、token、API Key 或原始响应。")
         }
         #endif
-        return String(localized: "当前运行时自动执行 Provider 发现与额度读取；只有你明确点击登录时，才会启动 MiniMax 或火山方舟的官方登录流程。此页不显示账号身份、token、API Key、本机路径或原始响应。")
+        return String(localized: "此页隐藏账号、凭据和原始响应，仅保留诊断信息。")
     }
 }
 
@@ -540,7 +552,7 @@ private struct ProviderSettingsRow: View {
         self.onSelectExecutable = onSelectExecutable
         self.onSetProductEnabled = onSetProductEnabled
         self.reportAction = reportAction
-        self._isEnabled = AppStorage(wrappedValue: true, provider.preferenceKey)
+        self._isEnabled = AppStorage(wrappedValue: ProviderDefaults.initiallyEnabled.contains(provider.id), provider.preferenceKey)
         self._refreshOverrideSeconds = AppStorage(wrappedValue: -1, provider.refreshOverrideKey)
     }
 
@@ -566,7 +578,7 @@ private struct ProviderSettingsRow: View {
                 .frame(height: 54)
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("\(ProviderPresentation.cliName(for: provider.id)) · 自动检测")
+                Text(provider.id == .grokBot ? "cursor.com · HTTPS 只读" : "\(ProviderPresentation.cliName(for: provider.id)) · 自动检测")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
@@ -593,6 +605,10 @@ private struct ProviderSettingsRow: View {
                     actionControls
                 }
 
+                if provider.id == .grokBot {
+                    Text("允许后，只读 Cursor 的 User/globalStorage/state.vscdb 中指定登录键，用于向 cursor.com 核对账户与查询 Grok / Cursor 共享周额度。会话仅在内存使用。关闭开关即撤销、取消请求并清除本次额度。无此来源时请先在 Cursor 登录。共享周用量和月额外用量分别显示。")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 if isEnabled && provider.id == .ark {
                     HStack(spacing: 12) {
                         Text("展示套餐")
@@ -618,7 +634,7 @@ private struct ProviderSettingsRow: View {
 
             Spacer(minLength: 8)
 
-            Toggle("启用 \(ProviderPresentation.displayName(for: provider.id))", isOn: $isEnabled)
+            Toggle(provider.id == .grokBot ? "允许只读使用 Cursor 会话" : "启用 \(ProviderPresentation.displayName(for: provider.id))", isOn: $isEnabled)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .onChange(of: isEnabled) { newValue in
@@ -733,7 +749,7 @@ private struct ProviderSettingsRow: View {
 
     private var statusDetail: String? {
         if !isEnabled {
-            return String(localized: "不会退出登录或删除缓存")
+            return provider.id == .grokBot ? "会话读取未授权，本次读数已清除" : String(localized: "不会退出登录或删除缓存")
         }
         if let activityDetail = ProviderActivityPresentation.detail(
             for: provider
@@ -778,7 +794,7 @@ private struct ProviderSettingsRow: View {
                 } else {
                     Button("查看登录指引") {
                         reportAction(
-                            String(localized: "请在 Codex CLI 中完成官方登录，然后返回额度管家刷新或重新检测")
+                            provider.id == .grokBot ? "请先在 Cursor 应用中登录，再返回额度管家刷新。此来源不可用时不会读取浏览器或 Keychain。" : String(localized: "请在 Codex CLI 中完成官方登录，然后返回额度管家刷新或重新检测")
                         )
                     }
                     .buttonStyle(.borderedProminent)
@@ -789,7 +805,7 @@ private struct ProviderSettingsRow: View {
                 } else {
                     Button("查看登录指引") {
                         reportAction(
-                            String(localized: "请在 Codex CLI 中重新完成官方登录，然后返回额度管家刷新或重新检测")
+                            provider.id == .grokBot ? "请先在 Cursor 应用中重新登录，再返回额度管家刷新。关闭开关可撤销会话读取。" : String(localized: "请在 Codex CLI 中重新完成官方登录，然后返回额度管家刷新或重新检测")
                         )
                     }
                     .buttonStyle(.borderedProminent)
@@ -899,6 +915,7 @@ private extension Stage3ProviderProjection {
         case .openAI: ProviderPreferenceKey.openAIEnabled
         case .miniMax: ProviderPreferenceKey.miniMaxEnabled
         case .ark: ProviderPreferenceKey.arkEnabled
+        case .grokBot: ProviderPreferenceKey.grokBotEnabled
         }
     }
 
@@ -907,6 +924,7 @@ private extension Stage3ProviderProjection {
         case .openAI: ProviderPreferenceKey.openAIRefreshOverrideSeconds
         case .miniMax: ProviderPreferenceKey.miniMaxRefreshOverrideSeconds
         case .ark: ProviderPreferenceKey.arkRefreshOverrideSeconds
+        case .grokBot: ProviderPreferenceKey.grokBotRefreshOverrideSeconds
         }
     }
 }

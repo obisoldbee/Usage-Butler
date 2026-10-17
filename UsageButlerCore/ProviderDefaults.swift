@@ -2,7 +2,7 @@ import Foundation
 import UsageButlerDomain
 
 public enum ProviderDefaults {
-    public static let initiallyEnabled: Set<ProviderID> = Set(ProviderID.allCases)
+    public static let initiallyEnabled: Set<ProviderID> = [.openAI, .miniMax, .ark]
 }
 
 /// UserDefaults keys for network preferences. The store
@@ -16,6 +16,8 @@ public enum NetworkPreferenceKey {
 }
 
 public enum ProviderPreferenceKey {
+    public static let grokBotEnabled = "usageButler.settings.v1.providers.grokBot.cursorConsent"
+    public static let grokBotRefreshOverrideSeconds = "usageButler.settings.v1.providers.grokBot.refreshOverrideSeconds"
     public static let openAIEnabled = "usageButler.settings.v1.providers.openai.enabled"
     public static let miniMaxEnabled = "usageButler.settings.v1.providers.minimax.enabled"
     public static let arkEnabled = "usageButler.settings.v1.providers.ark.enabled"
@@ -36,6 +38,7 @@ public enum ProviderPreferenceKey {
         case .openAI: openAIRefreshOverrideSeconds
         case .miniMax: miniMaxRefreshOverrideSeconds
         case .ark: arkRefreshOverrideSeconds
+        case .grokBot: grokBotRefreshOverrideSeconds
         }
     }
 

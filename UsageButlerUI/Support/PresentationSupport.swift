@@ -8,6 +8,7 @@ public enum ProviderPresentation {
         case .openAI: "OpenAI"
         case .miniMax: "MiniMax"
         case .ark: String(localized: "火山方舟")
+        case .grokBot: "Grok Bot"
         }
     }
 
@@ -16,6 +17,7 @@ public enum ProviderPresentation {
         case .openAI: "codex"
         case .miniMax: "mmx"
         case .ark: "arkcli"
+        case .grokBot: "Cursor"
         }
     }
 
@@ -24,6 +26,7 @@ public enum ProviderPresentation {
         case .openAI: "circle.hexagongrid.fill"
         case .miniMax: "waveform"
         case .ark: "mountain.2.fill"
+        case .grokBot: "bolt.horizontal.circle"
         }
     }
 
@@ -33,6 +36,7 @@ public enum ProviderPresentation {
         case .openAI: "ProviderOpenAILogo"
         case .miniMax: "ProviderMiniMaxLogo"
         case .ark: "ProviderArkLogo"
+        case .grokBot: nil
         }
     }
 
@@ -41,6 +45,7 @@ public enum ProviderPresentation {
         case .openAI: .primary
         case .miniMax: Color(red: 0.96, green: 0.16, blue: 0.42)
         case .ark: Color(red: 0.10, green: 0.43, blue: 0.95)
+        case .grokBot: .primary
         }
     }
 
@@ -67,7 +72,7 @@ public enum ProviderPresentation {
         case .cacheCorrupt, .cacheUnavailable:
             (String(localized: "本地缓存不可用"), "externaldrive.badge.exclamationmark", .orange)
         case .identityMismatch:
-            (String(localized: "来源身份不匹配"), "person.crop.circle.badge.exclamationmark", .red)
+            (String(localized: "本地登录身份与额度来源不一致，请检查登录"), "person.crop.circle.badge.exclamationmark", .red)
         case .processFailed:
             (String(localized: "CLI 执行失败"), "terminal.fill", .orange)
         case .cancelled:
@@ -92,12 +97,12 @@ public enum ProviderPresentation {
         case .verifiedFresh:
             return String(localized: "\(name) 已重新登录并读取到最新额度")
         case .authorizationNotRenewed:
-            return String(localized: "\(name) 登录流程已结束，但授权到期时间未更新")
+            return String(localized: "\(name) 登录已结束，授权到期时间尚未更新，请重试")
         case let .verificationFailed(code):
             if let code {
-                return String(localized: "\(name) 登录流程已结束，但额度验证失败：\(failure(code).title)")
+                return String(localized: "\(name) 登录已结束，\(failure(code).title)，请重试")
             }
-            return String(localized: "\(name) 登录流程已结束，但尚未读取到最新额度")
+            return String(localized: "\(name) 登录已结束，暂未读取到最新额度，请重试")
         case .rateLimited:
             return String(localized: "\(name) 登录请求过于频繁，请稍后再试")
         case .flowFailed:
@@ -171,9 +176,8 @@ public enum QuotaUpdatePresentation {
     }
 }
 
-/// Availability-band coloring for quota progress bars. The bar length keeps
-/// showing the reported direction (remaining for OpenAI, used elsewhere), but
-/// the tint always reflects the *available* share: [0,30] red, (30,60] yellow,
+/// Availability-band coloring uses the source projection in every display mode.
+/// The tint always reflects the *available* share: [0,30] red, (30,60] yellow,
 /// (60,100] green. Data older than the configured refresh interval plus ten
 /// minutes counts as lost and renders gray; a manual-only cadence carries no
 /// freshness expectation and never turns gray from age alone.
@@ -192,7 +196,8 @@ public enum QuotaAvailabilityBand: Equatable, Sendable {
         now: Date,
         refreshIntervalSeconds: Int
     ) -> QuotaAvailabilityBand? {
-        guard case let .percent(raw, direction) = value, raw.isFinite else {
+        guard case let .percent(raw, direction) = value, raw.isFinite,
+              (0...100).contains(raw) else {
             return nil
         }
         if refreshIntervalSeconds > 0 {
@@ -203,8 +208,7 @@ public enum QuotaAvailabilityBand: Equatable, Sendable {
         }
         // Classify in percent space: `100 - raw` keeps integer reports exact,
         // whereas scaling to 0...1 first makes 1 - 0.7 land above 0.3.
-        let reported = min(max(raw, 0), 100)
-        let available = direction == .remaining ? reported : 100 - reported
+        let available = direction == .remaining ? raw : 100 - raw
         if available <= 30 { return .low }
         if available <= 60 { return .medium }
         return .high

@@ -288,7 +288,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
         do { try await store.close(); XCTFail("capacity failure remains visible") } catch {}
     }
     func testExpiredIdentityCatalogueIsReclaimedAcrossManySessions() async throws {
-        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), configuration: .init(catalogueLimit: 3), clock: age.read)
+        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), configuration: .init(catalogueLimit: 3, retentionDays: 14), clock: age.read)
         for i in 0..<8 {
             age.set(UInt64(i*15*86400 + 1))
             try await store.accept(frame(1, at: day + Double(i*15*86400+1), upload: 7, session: "source-\(i)", key: "application-\(i)"))
@@ -425,7 +425,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
         try await store.close()
     }
     func testWallJumpDoesNotChargeAnIntervalAndDoesNotDeleteNotExpiredData() async throws {
-        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), clock: age.read)
+        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), configuration: .init(retentionDays: 14), clock: age.read)
         try await store.accept(frame(1, at: day + 1, upload: 10)); try await store.flush()
         age.set(2)
         try await store.accept(frame(2, at: day + 30 * 86_400, upload: 900, start: day + 1)); try await store.flush()
@@ -438,7 +438,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
         try await store.close()
     }
     func testRetentionUsesContinuousAgeAndReportsTrimmed() async throws {
-        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), clock: age.read)
+        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), configuration: .init(retentionDays: 14), clock: age.read)
         try await store.accept(frame(1, at: day + 1, upload: 10)); try await store.flush()
         age.set(15 * 86_400)
         try await store.accept(frame(1, at: day + 15 * 86_400 + 1, upload: 20, session: "source-b")); try await store.flush()
@@ -448,7 +448,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
         try await store.close()
     }
     func testRetentionSliceIsBoundedAndTombstoneSurvivesReopen() async throws {
-        let dir = try directory(), age = HistoryTestAge(), original = try NetworkHistoryStore(directory: dir, clock: age.read)
+        let dir = try directory(), age = HistoryTestAge(), original = try NetworkHistoryStore(directory: dir, configuration: .init(retentionDays: 14), clock: age.read)
         for n in 1...3 { try await original.accept(frame(UInt64(n), at: day + Double(n), upload: 7, key: "app-\(n)")) }
         try await original.close()
         let fixture = try HistoryDatabase(path: original.databaseURL)
@@ -460,7 +460,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
         """)
         try fixture.checkpoint(); fixture.close()
         age.set(15 * 86_400)
-        let store = try NetworkHistoryStore(directory: dir, clock: age.read)
+        let store = try NetworkHistoryStore(directory: dir, configuration: .init(retentionDays: 14), clock: age.read)
         try await store.accept(frame(1, at: day + 15*86400 + 1, upload: 19, session: "new", key: "new"))
         try await store.flush()
         let read = try HistoryDatabase(path: store.databaseURL, readOnly: true)
@@ -471,7 +471,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
             start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 86400)))
         XCTAssertTrue(expired.applications.isEmpty)
         try await store.close()
-        let reopened = try NetworkHistoryStore(directory: dir, clock: age.read)
+        let reopened = try NetworkHistoryStore(directory: dir, configuration: .init(retentionDays: 14), clock: age.read)
         try await reopened.maintain()
         let after = try HistoryDatabase(path: reopened.databaseURL, readOnly: true)
         XCTAssertEqual(try after.scalar("SELECT count(*) FROM segments WHERE age<0"), 0)
@@ -480,7 +480,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
     }
     func testExpiredCatalogueSlotsAreReclaimedBeforeAdmittingNewIdentity() async throws {
         let dir = try directory(), age = HistoryTestAge()
-        let original = try NetworkHistoryStore(directory: dir, configuration: .init(catalogueLimit: 4), clock: age.read)
+        let original = try NetworkHistoryStore(directory: dir, configuration: .init(catalogueLimit: 4, retentionDays: 14), clock: age.read)
         for n in 1...4 { try await original.accept(frame(UInt64(n), at: day + Double(n), upload: 7, key: "app-\(n)")) }
         try await original.close()
         let fixture = try HistoryDatabase(path: original.databaseURL)
@@ -491,7 +491,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
         INSERT INTO buckets SELECT 1,1+v/1000,v%1000,(SELECT payload FROM seed),1 FROM n;
         """)
         try fixture.checkpoint(); fixture.close(); age.set(15*86400)
-        let store = try NetworkHistoryStore(directory: dir, configuration: .init(catalogueLimit: 4), clock: age.read)
+        let store = try NetworkHistoryStore(directory: dir, configuration: .init(catalogueLimit: 4, retentionDays: 14), clock: age.read)
         try await store.accept(frame(1, at: day + 15*86400 + 1, upload: 19, session: "new", key: "new"))
         try await store.flush()
         let read = try HistoryDatabase(path: store.databaseURL, readOnly: true)
@@ -506,7 +506,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
     }
     func testRetirementPreservesLiveIdentityAndActivityAndDoesNotReuseRetiredSegmentID() async throws {
         let dir = try directory(), age = HistoryTestAge()
-        let store = try NetworkHistoryStore(directory: dir, configuration: .init(catalogueLimit: 4), clock: age.read)
+        let store = try NetworkHistoryStore(directory: dir, configuration: .init(catalogueLimit: 4, retentionDays: 14), clock: age.read)
         for n in 1...4 { try await store.accept(frame(UInt64(n), at: day + Double(n), upload: 7, key: "app-\(n)")) }
         try await store.flush(); age.set(13*86400)
         try await store.accept(frame(1, at: day + 13*86400 + 1, upload: 200_000_000, session: "retained", key: "app-1"))
@@ -529,7 +529,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
         read.close(); try await store.close()
     }
     func testSameSessionExpirationCannotReactivateAnOlderSegment() async throws {
-        let dir = try directory(), age = HistoryTestAge(), store = try NetworkHistoryStore(directory: dir, clock: age.read)
+        let dir = try directory(), age = HistoryTestAge(), store = try NetworkHistoryStore(directory: dir, configuration: .init(retentionDays: 14), clock: age.read)
         try await store.accept(frame(1, at: day + 1, upload: 11))
         try await store.accept(frame(2, at: day + 86401, upload: 13)); try await store.flush()
         age.set(15*86400)
@@ -632,7 +632,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
         let status = await store.coverage(); XCTAssertNil(status.issue); try await store.close()
     }
     func testMidnightActivityBoundaryPreservesNewEventAfterOldSegmentExpires() async throws {
-        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), clock: age.read)
+        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), configuration: .init(retentionDays: 14), clock: age.read)
         try await store.setUploadRule(.init(largeBytes: 1_048_576, sustainedSeconds: 5, sustainedBytesPerSecond: 1024))
         try await store.accept(frame(1, at: day + 86_399, upload: 1_048_576))
         try await store.accept(frame(2, at: day + 86_400, upload: 1_048_576)); try await store.flush()
@@ -765,7 +765,7 @@ final class NetworkHistoryStoreTests: XCTestCase {
 
 extension NetworkHistoryStoreTests {
     private func browsingStore(positive: Bool = true) async throws -> (UsageButlerInfrastructure.NetworkHistoryStore, UsageButlerInfrastructure.NetworkHistoryQuery, HistoryRange, HistoryTestAge) {
-        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), clock: age.read)
+        let age = HistoryTestAge(), store = try NetworkHistoryStore(directory: directory(), configuration: .init(retentionDays: 14), clock: age.read)
         try await store.setUploadRule(.init(largeBytes: 1_048_576, sustainedSeconds: 5, sustainedBytesPerSecond: 1024))
         for sequence in 1...2 {
             let applications: [ProcessNetworkSettlement.Application] = (0..<65).map { index in
@@ -1004,5 +1004,94 @@ extension NetworkHistoryStoreTests {
         XCTAssertNil(recovered.error); XCTAssertEqual(recovered.history?.applications.map(\.identity.key), ["browse-064"])
         XCTAssertEqual(factory.sources.count, 1); XCTAssertEqual(source.stopCount, 0)
         await engine.shutdown(disable: false)
+    }
+}
+
+
+extension NetworkHistoryStoreTests {
+    func testPermanentHistoryKeepsWritingBeyondOld512MiBFileLimit() async throws {
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let original = try NetworkHistoryStore(directory: dir)
+        try await original.accept(frame(1, at: day + 1, upload: 7))
+        try await original.close()
+        let setup = try HistoryDatabase(path: original.databaseURL)
+        // Allocate actual SQLite pages in bounded transactions. This fixture
+        // exercises the filesystem-size check without creating fake flow data.
+        try setup.execute("PRAGMA cache_spill=ON; CREATE TABLE size_fixture(payload BLOB)")
+        for _ in 0..<129 {
+            try setup.execute("INSERT INTO size_fixture VALUES(zeroblob(4194304))")
+        }
+        try setup.checkpoint()
+        XCTAssertGreaterThan(setup.sizes.database, 512 * 1_048_576)
+        setup.close()
+        let reopened = try NetworkHistoryStore(directory: dir)
+        try await reopened.accept(frame(2, at: day + 61, upload: 11))
+        try await reopened.flush()
+        let coverage = await reopened.coverage()
+        XCTAssertNil(coverage.issue)
+        XCTAssertEqual(coverage.retentionDays, 0)
+        try await reopened.close()
+        let result = try await NetworkHistoryQuery(databaseURL: original.databaseURL).query(range: .init(
+            start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 120)), applicationKey: "synthetic")
+        XCTAssertEqual(result.applications.first?.totals.upload, 18)
+        XCTAssertEqual(result.curve.map(\.totals.upload), [7, 11])
+        XCTAssertEqual(result.coverage.retentionDays, 0)
+    }
+    func testDefaultHistorySurvivesYearsMaintenanceAndReopen() async throws {
+        let dir = try directory(), age = HistoryTestAge()
+        let original = try NetworkHistoryStore(directory: dir, clock: age.read)
+        let initialCoverage = await original.coverage()
+        XCTAssertEqual(initialCoverage.retentionDays, 0)
+        try await original.accept(frame(1, at: day + 1, upload: 1_048_576))
+        try await original.flush()
+        let range = HistoryRange(start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60))
+        let before = try await NetworkHistoryQuery(databaseURL: original.databaseURL).query(range: range)
+        age.set(2 * 365 * 86_400)
+        try await original.maintain()
+        try await original.accept(frame(1, at: day + 2 * 365 * 86_400 + 1, upload: 19, session: "two-years-later"))
+        try await original.close()
+        let reopened = try NetworkHistoryStore(directory: dir, clock: age.read)
+        try await reopened.maintain()
+        let after = try await NetworkHistoryQuery(databaseURL: reopened.databaseURL).query(range: range, search: "")
+        XCTAssertEqual(after.applications.first?.totals, before.applications.first?.totals)
+        XCTAssertEqual(after.coverage.retentionDays, 0)
+        XCTAssertFalse(after.coverage.retentionTrimmed)
+        let read = try HistoryDatabase(path: reopened.databaseURL, readOnly: true)
+        XCTAssertEqual(try read.scalar("SELECT count(*) FROM segments"), 2)
+        XCTAssertEqual(try read.scalar("SELECT count(*) FROM buckets"), 2)
+        read.close(); try await reopened.close()
+    }
+    func testPermanentPolicyStopsLegacyTombstoneDeletion() async throws {
+        let dir = try directory(), age = HistoryTestAge()
+        let original = try NetworkHistoryStore(directory: dir, clock: age.read)
+        try await original.accept(frame(1, at: day + 1, upload: 17)); try await original.close()
+        let setup = try HistoryDatabase(path: original.databaseURL)
+        try setup.execute("UPDATE segments SET age=-1")
+        try setup.checkpoint(); setup.close()
+        age.set(60 * 86_400)
+        let reopened = try NetworkHistoryStore(directory: dir, clock: age.read)
+        try await reopened.maintain()
+        let result = try await NetworkHistoryQuery(databaseURL: reopened.databaseURL).query(range: .init(
+            start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60)))
+        XCTAssertEqual(result.applications.first?.totals.upload, 17)
+        let read = try HistoryDatabase(path: reopened.databaseURL, readOnly: true)
+        XCTAssertEqual(try read.scalar("SELECT count(*) FROM buckets"), 1)
+        XCTAssertEqual(try read.scalar("SELECT count(*) FROM applications"), 1)
+        read.close(); try await reopened.close()
+    }
+    func testCurrentRangeSearchDoesNotScanLifetimeIdentityCatalogue() async throws {
+        let dir = try directory(), store = try NetworkHistoryStore(directory: dir)
+        try await store.accept(frame(1, at: day + 1, upload: 31, name: "Current Needle")); try await store.close()
+        let setup = try HistoryDatabase(path: store.databaseURL)
+        try setup.execute("""
+        WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<9000)
+        INSERT INTO applications(digest,stable,identity) SELECT 'historic-'||v,'historic-'||v,(SELECT identity FROM applications LIMIT 1) FROM n;
+        """)
+        try setup.checkpoint(); setup.close()
+        let result = try await NetworkHistoryQuery(databaseURL: store.databaseURL).query(range: .init(
+            start: .init(timeIntervalSince1970: day), end: .init(timeIntervalSince1970: day + 60)), search: "Needle")
+        XCTAssertEqual(result.applications.first?.totals.upload, 31)
+        XCTAssertEqual(result.totalApplications, 1)
     }
 }

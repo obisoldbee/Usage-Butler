@@ -356,7 +356,7 @@ final class QuotaAlertServiceTests: XCTestCase {
         }
         let payloads = await notifier.payloads
         let recoveredMarkers = await store.stored
-        XCTAssertEqual(payloads.map(\.title), ["额度已重置"])
+        XCTAssertEqual(payloads.map(\.title), ["额度已恢复"], "Mixed recovery includes a balance without a reset window")
         XCTAssertEqual(payloads.first?.bodyLines.count, 3)
         XCTAssertTrue(recoveredMarkers.isEmpty)
     }

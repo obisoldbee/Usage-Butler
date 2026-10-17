@@ -226,7 +226,7 @@ final class NetworkMacReviewTests: XCTestCase {
         XCTAssertEqual(model.larkQuotaAlertChannelStatus, .notChecked)
         await model.loadSettingsStatus(for: .general)
         XCTAssertEqual(model.larkQuotaAlertChannelStatus, .unavailable)
-        XCTAssertEqual(model.settingsSourceDisclosure, "本机运行时 · 只读")
+        XCTAssertEqual(model.settingsSourceDisclosure, "")
         #if USAGE_BUTLER_FIXTURES
         let fixture = MenuPanelViewModel(snapshot: Stage3FixtureCatalog.projection())
         for page in SettingsPage.allCases {

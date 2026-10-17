@@ -14,10 +14,10 @@ struct BackgroundHistorySettingsView: View {
                     .disabled(model.changing || model.onEnabled == nil)
                     .accessibilityIdentifier("settings.history.enabled")
                 Text(model.serviceTitle).font(.callout).accessibilityIdentifier("settings.history.status")
-                Text("默认保存14天实际观察的应用分钟记录。停止后台会保留历史；不会补回未采集、休眠、注销或关机期间的流量。")
+                Text("历史持续保留，不按天数自动删除。停止后台会保留已有记录。")
                     .font(.caption).foregroundStyle(.secondary)
                 if let committed = model.status?.coverage.lastCommittedAt {
-                    Text("最近已保存：\(committed.formatted(date: .abbreviated, time: .standard))").font(.caption)
+                    Text("最近保存  \(committed.formatted(date: .abbreviated, time: .standard))").font(.caption)
                 }
                 HStack {
                     Button("查看历史") { model.onOpenHistory?() }.accessibilityIdentifier("settings.history.open")
@@ -29,13 +29,21 @@ struct BackgroundHistorySettingsView: View {
                     }
                 }
                 Divider()
-                Text("本地上传活动筛选").font(.subheadline.weight(.semibold))
+                Text("上传活动筛选").font(.subheadline.weight(.semibold))
                 HStack {
-                    Text("连续上传段 ≥")
+                    Text("连续上传量 ≥")
                     TextField("MiB", text: $ruleFields.largeMiB).frame(width: 260)
                         .accessibilityIdentifier("settings.history.largeMiB")
                     Text("MiB")
                 }
+                HStack {
+                    Text("持续 ≥"); TextField("秒", text: $ruleFields.sustainedSeconds).frame(width: 70); Text("秒，每次读数 ≥")
+                    TextField("KiB/s", text: $ruleFields.sustainedKiB).frame(width: 80); Text("KiB/s")
+                }
+                Text("新阈值用于之后的记录，旧活动保留当时规则。")
+                    .font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup("记录如何分段") {
+                    VStack(alignment: .leading, spacing: 6) {
                 if let bytes = ruleFields.parsedLargeBytes {
                     Text("精确阈值：\(String(bytes)) 字节").font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("settings.history.largeBytes")
@@ -43,14 +51,11 @@ struct BackgroundHistorySettingsView: View {
                     Text("MiB 需对应完整字节，范围为1–1073741824 MiB。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                HStack {
-                    Text("持续 ≥"); TextField("秒", text: $ruleFields.sustainedSeconds).frame(width: 70); Text("秒，每次采样 ≥")
-                    TextField("KiB/s", text: $ruleFields.sustainedKiB).frame(width: 80); Text("KiB/s")
+                        Text("零流量或没有可用读数会结束连续段；持续上传还会在读数低于速率阈值时结束。")
+                        Text("后台重启、系统时间跳变和UTC日期变化会分段。")
+                        Text("筛选只影响本地记录，不发送提醒或阻断连接。")
+                    }.font(.caption).foregroundStyle(.secondary)
                 }
-                Text("零流量或未知读数会结束连续段；持续上传还会在低于速率阈值时结束。来源重启、时间跳变和 UTC 日期边界会分段。")
-                    .font(.caption2).foregroundStyle(.secondary)
-                Text("新阈值用于后续采样；旧活动保留当时规则。这里只筛选本地记录，不发送消息或阻断连接。")
-                    .font(.caption2).foregroundStyle(.secondary)
                 HStack {
                     Button("保存筛选阈值") { saveRule() }.disabled(savingRule || model.onRule == nil)
                         .accessibilityIdentifier("settings.history.saveRule")

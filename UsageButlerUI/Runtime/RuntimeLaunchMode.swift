@@ -14,6 +14,12 @@ public enum RuntimeLaunchMode: Equatable, Sendable {
         // LaunchServices or an accessibility tool may reopen a validation App
         // without the original environment. Its isolated identity must never
         // silently construct production providers in a fixture-capable build.
+        // Copy previews are offline even when reopened without launch arguments.
+        if ["io.github.obisoldbee.UsageButler.Preview.Copy.Before",
+            "io.github.obisoldbee.UsageButler.Preview.Copy.After",
+            "io.github.obisoldbee.UsageButler.Preview.Copy.GrokBot"].contains(bundleIdentifier ?? "") {
+            return .offlineFixture
+        }
         if bundleIdentifier?.hasPrefix("io.github.obisoldbee.UsageButler.Validation.History") == true {
             return .networkValidation
         }

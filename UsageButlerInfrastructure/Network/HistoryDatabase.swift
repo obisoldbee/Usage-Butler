@@ -55,7 +55,7 @@ final class HistoryDatabase: @unchecked Sendable {
     let path: URL
     let readOnly: Bool
     static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-    init(path: URL, readOnly: Bool = false, pageLimit: Int = 126_976) throws {
+    init(path: URL, readOnly: Bool = false, pageLimit: Int = 2_147_483_646) throws {
         self.path = path; self.readOnly = readOnly
         var info = stat()
         guard lstat(path.deletingLastPathComponent().path, &info) == 0,
@@ -111,9 +111,10 @@ final class HistoryDatabase: @unchecked Sendable {
         guard sqlite3_db_status(handle, SQLITE_DBSTATUS_CACHE_USED, &bytes, &peak, 0) == SQLITE_OK,
               bytes >= 0, bytes <= 4 * 1_048_576 else { throw NetworkHistoryError.capacity }
         let size = sizes, reserve = Int64(bytes) * 2 + 4096
-        let pages = try scalar("PRAGMA page_count"), pageSize = try scalar("PRAGMA page_size")
-        guard size.wal + reserve <= 16 * 1_048_576,
-              max(size.database, pages * pageSize) + size.wal + reserve <= 512 * 1_048_576 else {
+        // Bound working memory and WAL independently from retained history.
+        // SQLITE_FULL remains a visible failure; never erase old records to
+        // make a full disk or an explicitly limited test database writable.
+        guard size.wal + reserve <= 16 * 1_048_576 else {
             throw NetworkHistoryError.capacity
         }
     }

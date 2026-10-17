@@ -115,6 +115,8 @@ public actor ProviderController {
             switch intent {
             case .shutdown, .setRefreshPolicy:
                 break
+            case .setEnabled(false) where !adapter.retainsDataWhenDisabled:
+                break
             case .clearCache:
                 return .joined(generation: operationGeneration)
             default:
@@ -189,12 +191,17 @@ public actor ProviderController {
         phase = .starting
         publish()
 
-        let loadResult = await cache.load(providerID: state.id)
+        let cacheLoadGeneration = operationGeneration
+        await adapter.setAccessEnabled(isEnabled, generation: cacheLoadGeneration)
+        let loaded = await cache.load(providerID: state.id)
         guard phase != .shuttingDown, phase != .stopped else {
             return .cancelled
         }
 
         let reading = await clock.reading()
+        guard phase != .shuttingDown, phase != .stopped else { return .cancelled }
+        let loadResult: ProviderQuotaCacheLoadResult = !adapter.retainsDataWhenDisabled
+            && (!isEnabled || cacheLoadGeneration != operationGeneration) ? .miss : loaded
         cacheLoadCompleted = true
         phase = .running
         switch loadResult {
@@ -235,6 +242,15 @@ public actor ProviderController {
         if !enabled {
             invalidateOperations()
             let generation = operationGeneration
+            await adapter.setAccessEnabled(false, generation: generation)
+            if !adapter.retainsDataWhenDisabled {
+                let clearedAt = await clock.reading()
+                if isCurrentOperation(generation), !isEnabled { apply(.sourceIdentityChanged, now: clearedAt.wallTime) }
+                let cleared = await cache.clear(providerID: state.id)
+                if case let .failure(failure) = cleared, isCurrentOperation(generation), !isEnabled {
+                    apply(.persistenceChanged(.degraded(failure)), now: clearedAt.wallTime)
+                }
+            }
             await scheduler.cancel(providerID: state.id)
             retryAttempts.removeAll()
             let reading = await clock.reading()
@@ -307,6 +323,14 @@ public actor ProviderController {
         let loginTask = login?.task
         invalidateOperations()
         let generation = operationGeneration
+        if !adapter.retainsDataWhenDisabled {
+            // Invalidate the in-memory source scope as well as the file ticket.
+            // Even an old save that starts after this clear must be rejected.
+            await adapter.setAccessEnabled(false, generation: generation)
+            guard isCurrentOperation(generation), phase == .running else { return .cancelled }
+            await adapter.setAccessEnabled(isEnabled, generation: generation)
+            guard isCurrentOperation(generation), phase == .running else { return .cancelled }
+        }
         await scheduler.cancel(providerID: state.id)
         retryAttempts.removeAll()
         // Keep the clear transaction exclusive until the cancelled login exits.
@@ -477,6 +501,8 @@ public actor ProviderController {
         apply(.redetect(.started(generation: generation)), now: reading.wallTime)
 
         let adapter = self.adapter
+        await adapter.setAccessEnabled(isEnabled, generation: generation)
+        guard isCurrentOperation(generation), isEnabled, phase == .running else { return .cancelled }
         let task = Task { await adapter.discover() }
         discovery = ActiveDiscovery(generation: generation, task: task)
         let result = await task.value
@@ -569,6 +595,9 @@ public actor ProviderController {
 
         let adapter = self.adapter
         let scope = trigger.scope
+        let discard = await adapter.prepareForRead(retaining: state.lastGood?.source)
+        guard isCurrentOperation(generation), isEnabled, phase == .running else { return .cancelled }
+        if discard { apply(.sourceIdentityChanged, now: reading.wallTime) }
         let task = Task { await adapter.read(scope: scope) }
         read = ActiveRead(generation: generation, scope: scope, task: task)
         let result = await task.value
@@ -579,6 +608,9 @@ public actor ProviderController {
               read?.generation == generation else {
             return .cancelled
         }
+        let mayRetain = await adapter.mayRetainLastGoodAfterRead()
+        guard isCurrentOperation(generation), isEnabled, phase == .running else { return .cancelled }
+        if !mayRetain { apply(.sourceIdentityChanged, now: reading.wallTime) }
         let authentication = await adapter.authenticationAfterRead()
         guard isCurrentOperation(generation), isEnabled, phase == .running,
               read?.generation == generation else { return .cancelled }

@@ -21,6 +21,10 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
     private var sizeObservation: AnyCancellable?
     private var screenObservation: AnyCancellable?
     private var shortcuts: ApplicationShortcutController?
+    private lazy var dismissal = TransientPanelDismissal(
+        panelWindow: { [weak self] in self?.popover.contentViewController?.view.window },
+        anchorWindow: { [weak self] in self?.statusItem.button?.window },
+        close: { [weak self] in self?.popover.performClose(nil) })
     private var keyDownMonitor: Any?
     private var memoryObservation: AnyCancellable?
     private var appearanceObservation: NSKeyValueObservation?
@@ -29,7 +33,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
     private var renderedPressure: MemoryPressureState?
     private var renderedDark: Bool?
 
-    init(runtime: AppRuntime) {
+    init(runtime: AppRuntime, installShortcuts: Bool = true) {
         self.runtime = runtime
         statusItem = NSStatusBar.system.statusItem(
             withLength: NSStatusItem.squareLength
@@ -75,6 +79,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
         }
         keyDownMonitor = monitor
 
+        if installShortcuts {
         let shortcuts = ApplicationShortcutController(registrar: CarbonApplicationHotkeys(),
             onPanel: { [weak self] in self?.togglePanel() },
             onSettings: { [weak runtime] in runtime?.openSettingsFallback() },
@@ -84,6 +89,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
             })
         self.shortcuts = shortcuts
         shortcuts.start(panelShortcut: runtime.storedPanelShortcut)
+        }
     }
 
     // Reuse the runtime stream: no new memory reader or polling loop.
@@ -141,6 +147,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
     /// available, and a design mock is not evidence about this window.
     var validationContentView: NSView? { validationWindow?.contentView ?? popover.contentViewController?.view }
     var validationIsShown: Bool { validationWindow?.isVisible ?? popover.isShown }
+    func validationShow(relativeTo anchor: NSView) { showPopover(relativeTo: anchor) }
     #endif
 
     @objc func togglePanel() {
@@ -169,7 +176,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
             popover.performClose(nil)
         } else if let button = statusItem.button {
             updateAvailableHeight()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            showPopover(relativeTo: button)
             #if DEBUG
             if CommandLine.arguments.contains("--show-panel-for-validation"), !popover.isShown,
                let screen = button.window?.screen ?? NSScreen.main {
@@ -188,7 +195,14 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
             }
             #endif
             NSApp.activate(ignoringOtherApps: true)
+            popover.contentViewController?.view.window?.makeKey()
         }
+    }
+
+    private func showPopover(relativeTo anchor: NSView) {
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        NSApp.activate(ignoringOtherApps: true)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     private func updateAvailableHeight() {
@@ -197,6 +211,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
     }
 
     func popoverDidClose(_ notification: Notification) {
+        dismissal.stop()
         runtime.setPanelVisible(false)
     }
 
@@ -206,11 +221,16 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
             NSLog("panel_validation shown width=%.0f height=%.0f", popover.contentSize.width, popover.contentSize.height)
         }
         #endif
+        dismissal.start()
         runtime.setPanelVisible(true)
     }
 
     /// Tab (no modifiers) cycles the panel pages while the panel window is key.
     private nonisolated func handlePanelKeyDown(_ event: NSEvent) -> NSEvent? {
+        if event.keyCode == 53, event.window === panelWindowRef {
+            MainActor.assumeIsolated { popover.performClose(nil) }
+            return nil
+        }
         guard PanelTabRouting.shouldCyclePage(for: event, panelWindow: panelWindowRef) else { return event }
         Task { @MainActor in
             runtime.menuModel.cyclePage()
@@ -231,7 +251,7 @@ final class PanelPresentationController: NSObject, NSPopoverDelegate {
 
     func applyShortcut(_ shortcut: GlobalShortcut?) { shortcuts?.applyPanelShortcut(shortcut) }
 
-    func stopShortcuts() { shortcuts?.stop() }
+    func stopShortcuts() { shortcuts?.stop(); dismissal.stop() }
 
 }
 

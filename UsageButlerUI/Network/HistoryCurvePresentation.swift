@@ -48,7 +48,31 @@ struct HistoryCurveInteraction: Equatable {
     mutating func reset() { inspected = nil; pinned = false; focused = nil }
 }
 
+struct HistoryCurveLinePoint: Identifiable {
+    let id: String
+    let series: Int
+    let date: Date
+    let rate: Double
+    let partial: Bool
+}
+
 enum HistoryCurvePresentation {
+    /// Horizontal minute-average segments and vertical transitions. A missing
+    /// interval starts another series, so Charts cannot interpolate over it.
+    static func linePoints(_ buckets: [HistoryCurveBucket], upload: Bool) -> [HistoryCurveLinePoint] {
+        var result: [HistoryCurveLinePoint] = [], series = 0
+        var previousEnd: Date?, previousPartial: Bool?
+        for (index, bucket) in buckets.enumerated() {
+            guard let rate = average(bucket, upload: upload) else { previousEnd = nil; continue }
+            let partial = isPartial(bucket, upload: upload)
+            if previousEnd != bucket.start || previousPartial != partial { series += 1 }
+            result.append(.init(id: "\(index)-start", series: series, date: bucket.start, rate: rate, partial: partial))
+            result.append(.init(id: "\(index)-end", series: series, date: bucket.end, rate: rate, partial: partial))
+            previousEnd = bucket.end; previousPartial = partial
+        }
+        return result
+    }
+
     static func observedBytes(_ totals: HistoryTotals, upload: Bool) -> UInt64? {
         guard (upload ? totals.uploadObservedMicroseconds : totals.downloadObservedMicroseconds) > 0 else { return nil }
         return upload ? totals.upload : totals.download
@@ -86,7 +110,7 @@ enum HistoryCurvePresentation {
     static func observation(_ point: HistoryCurveBucket, upload: Bool) -> String {
         guard let rate = average(point, upload: upload) else { return "无可用记录" }
         let status = isPartial(point, upload: upload) ? "部分记录" : "已记录"
-        return rate == 0 ? "已观察为零 · " + status : status
+        return rate == 0 ? "零流量 · " + status : status
     }
 
     static func span(_ point: HistoryCurveBucket) -> String {
@@ -98,13 +122,13 @@ enum HistoryCurvePresentation {
     static func granularity(_ buckets: [HistoryCurveBucket]) -> String {
         let spans = Set(buckets.map { $0.end.timeIntervalSince($0.start) }).sorted()
         guard !spans.isEmpty else { return "暂无可用时段" }
-        return "每柱代表：" + spans.map { "\(Int($0 / 60)) 分钟" }.joined(separator: " / ") + "；选择后查看实际时段起止。"
+        return "每柱 " + spans.map { "\(Int($0 / 60)) 分钟" }.joined(separator: " / ") + ""
     }
 
     static func historyNotice(coverage: HistoryCoverage, range: HistoryRange) -> String? {
         guard let first = coverage.firstCollectedAt else { return nil }
         let date = first.formatted(date: .abbreviated, time: .standard)
-        let notice = "首次开始记录时的系统时间：\(date)"
+        let notice = "首次记录时的系统时间  \(date)"
         // The first frame's wall time is not an absence boundary: valid records
         // may precede it after a clock change, or just by minute bucketing.
         if range.start < first {
@@ -116,11 +140,13 @@ enum HistoryCurvePresentation {
     static func emptyText(_ result: HistoryQueryResult) -> String {
         if result.totalApplications > 0 { return "本页已无更多应用；范围内共有 \(result.totalApplications) 个应用，可继续查看下方活动或返回上一页。" }
         if result.contract?.scope.search.isEmpty == false { return "没有符合搜索的应用，可清除搜索后查看此范围的历史。" }
-        if result.coverage.retentionTrimmed, let oldest = result.coverage.oldestRetainedAt, result.range.end <= oldest { return "此范围的记录已超出保留期限。" }
+        if result.coverage.retentionTrimmed, let oldest = result.coverage.oldestRetainedAt, result.range.end <= oldest {
+            return result.coverage.retentionDays == 0 ? "此范围没有可用记录，较早记录曾被旧版本清理。" : "此范围的记录已超出保留期限。"
+        }
         if result.coverage.unattributedSamples > 0 { return "此范围有源采样，但没有可归属应用的历史。" }
         return "此范围没有已保存的应用观察；未知时段不能当作零流量。"
     }
 
-    static let diagnosticsScope = "整个采集来源的诊断，未按当前应用或搜索筛选。无法归属计数是重复采样中的记录次数，不是此应用的连接数、流量或不同程序数。"
-    static let trafficScope = "包含来源计入的本机回环、代理流量；不能当作外网上传量。未记录历史目的地和接口，不能据此判断传输内容。"
+    static let diagnosticsScope = "采集服务的整体记录情况，包含所有应用。无法对应应用的记录按次数统计。"
+    static let trafficScope = "应用流量包含本机通信和代理转发，可能重复计数。记录不含连接目标或传输内容。"
 }

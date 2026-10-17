@@ -23,7 +23,7 @@ struct ProcessNetworkApplicationsView: View {
                 if let app = model.snapshot?.applications[key] { detail(app) }
                 else {
                     Button("返回应用列表") { model.back() }
-                    Text("此观察已结束，或历史未被保留。")
+                    Text("这条记录已不可用，请返回应用列表。")
                 }
             } else { list }
         }
@@ -33,9 +33,9 @@ struct ProcessNetworkApplicationsView: View {
         .sheet(isPresented: $showPreview) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("本地 JSON 导出预览").font(.headline)
-                Text("固定当前快照并使用应用别名；不含名称、路径、PID 或目标。别名化不等于匿名。")
+                Text(model.selected == nil ? "导出当前列表。应用使用编号，文件不含名称、路径、PID或连接目标。" : "导出当前应用。文件不含名称、路径、PID或连接目标。")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("此 v1 导出只含当前可用的最近 60 秒原始点；长期分钟记录请在历史窗口导出。")
+                Text("仅包含当前可用的最近60秒数据；更早记录请从历史窗口导出。用量和时间仍可能帮助识别来源。")
                     .font(.caption2).foregroundStyle(.secondary)
                 ScrollView { Text(preview?.text ?? "").font(.system(.caption, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                 HStack {
@@ -63,7 +63,7 @@ struct ProcessNetworkApplicationsView: View {
                 Button("导出预览") { prepareExport(detail: nil) }.disabled(model.rows.isEmpty)
                     .accessibilityIdentifier("network.apps.export")
             }
-            Text("系统可见进程的收发字节 · 含回环与代理进程").font(.caption).foregroundStyle(.secondary)
+            Text("应用流量包含本机通信和代理转发").font(.caption).foregroundStyle(.secondary)
             status
             HStack {
                 TextField("搜索应用或进程", text: $model.search)
@@ -76,11 +76,17 @@ struct ProcessNetworkApplicationsView: View {
             }
             Toggle("仅看关注", isOn: $model.onlyWatched).toggleStyle(.checkbox)
                 .accessibilityIdentifier("network.apps.watchedOnly")
-            HStack {
-                Text("应用 / 进程").frame(maxWidth: .infinity, alignment: .leading)
-                Text("当前上传").frame(width: 92, alignment: .trailing)
-                Text("当前下载").frame(width: 92, alignment: .trailing)
-            }.font(.caption).foregroundStyle(.secondary).padding(.trailing, 22)
+            HStack(spacing: 5) {
+                HStack(spacing: 8) {
+                    Text("应用 / 进程").frame(maxWidth: .infinity, alignment: .leading)
+                    Text("当前上传").frame(width: 92, alignment: .trailing)
+                        .accessibilityIdentifier("network.apps.column.upload")
+                    Text("当前下载").frame(width: 92, alignment: .trailing)
+                        .accessibilityIdentifier("network.apps.column.download")
+                    Color.clear.frame(width: 8, height: 1)
+                }.padding(.horizontal, 8)
+                Color.clear.frame(width: 20, height: 1)
+            }.font(.caption).foregroundStyle(.secondary)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 2) {
@@ -105,7 +111,7 @@ struct ProcessNetworkApplicationsView: View {
                             }
                         }
                         if model.rows.isEmpty {
-                            Text(model.search.isEmpty ? "当前没有可显示的应用观察。" : "没有匹配的应用或进程。")
+                            Text(model.search.isEmpty ? "当前没有应用流量记录。" : "没有匹配的应用或进程。")
                                 .font(.callout).foregroundStyle(.secondary).padding(.vertical, 30)
                         }
                     }
@@ -121,7 +127,7 @@ struct ProcessNetworkApplicationsView: View {
                       model.rows.contains(where: { $0.identity.key == app }) else { return false }
                 model.open(app); return true
             })
-            Text("关注仅在本次运行保留；不发送提醒。累计与趋势从实际观测起点开始。")
+            Text("关闭主程序后会清空关注名单；关注不发送提醒。")
                 .font(.caption2).foregroundStyle(.secondary)
         }
     }
@@ -130,12 +136,12 @@ struct ProcessNetworkApplicationsView: View {
             Text(model.observationTitle)
                 .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("network.apps.status")
             if let sampledAt = model.snapshot?.sampledAt {
-                Text("保留的上次采样：\(sampledAt.formatted(date: .abbreviated, time: .standard)) · 不代表当前速率")
+                Text("上次记录  \(sampledAt.formatted(date: .abbreviated, time: .standard))，当前速率不可用")
                     .font(.caption2).foregroundStyle(.secondary)
             }
         }
         if model.snapshot?.truncated == true {
-            Text("历史受资源预算限制，部分早期样本或应用未保留。")
+            Text("记录数量达到上限，部分较早样本或应用未保留。")
                 .font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier("network.apps.truncated")
         }
     }
@@ -152,17 +158,19 @@ struct ProcessNetworkApplicationsView: View {
             }.frame(maxWidth: .infinity, alignment: .leading)
             Text(NetworkPresentation.rate(fresh ? app.rate?.uploadBytesPerSecond : nil))
                 .foregroundStyle(NetworkPresentation.uploadColor).frame(width: 92, alignment: .trailing)
+                .accessibilityIdentifier("network.apps.upload.\(app.identity.key)")
             Text(NetworkPresentation.rate(fresh ? app.rate?.downloadBytesPerSecond : nil))
                 .foregroundStyle(NetworkPresentation.downloadColor).frame(width: 92, alignment: .trailing)
-            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
+                .accessibilityIdentifier("network.apps.download.\(app.identity.key)")
+            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary).frame(width: 8)
         }.font(.caption).monospacedDigit().padding(.horizontal, 8).padding(.vertical, 9)
             .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 7)).contentShape(Rectangle())
     }
     private func presence(_ app: ProcessNetworkApplication) -> String {
         switch app.presence {
-        case .present: return app.identity.evidence == .unknown ? "身份未确认 · 不跨样本结算" : "\(app.processes.count) 个已观察进程"
-        case .missing: return "当前源中未出现 · 保留历史"
-        case .unknown: return "当前存在状态未知"
+        case .present: return app.identity.evidence == .unknown ? "暂无法确认这个进程所属的应用" : "\(app.processes.count) 个已观察进程"
+        case .missing: return "最近采样未发现，保留已有记录"
+        case .unknown: return "暂无法确认是否仍在运行"
         case .notObserved: return "未观察 · 保留历史"
         }
     }
@@ -193,47 +201,40 @@ struct ProcessNetworkApplicationsView: View {
                 NetworkTrendView(range: $model.range, frame: model.frame(for: app, now: now),
                     total: app.total, rate: app.rate, stale: !model.fresh(app, now: now), interface: app.identity.key)
             } else {
-                HStack(spacing: 3) {
-                    ForEach(NetworkTrendRange.allCases) { option in
-                        Button { model.range = option } label: {
-                            Text(option.title).font(.system(size: 11)).frame(maxWidth: .infinity, minHeight: 32)
-                                .background(model.range == option ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
-                                .foregroundStyle(model.range == option ? Color.white : Color.primary).contentShape(Rectangle())
-                        }.buttonStyle(.plain).accessibilityIdentifier("network.range.\(option.rawValue)")
-                            .accessibilityAddTraits(model.range == option ? .isSelected : [])
-                    }
-                }
-                if let history = model.longHistory { HistoryCurveView(buckets: history.curve, range: history.range) }
-                else if model.longHistoryLoading { ProgressView("读取分钟历史…") }
-                else { Text(model.longHistoryIssue ?? "此范围尚无分钟历史。").font(.caption).foregroundStyle(.secondary) }
+                NetworkRangeSelector(range: $model.range)
+                Text(model.longHistoryLoading ? "读取\(model.range.title)历史…" : " ").font(.caption2).foregroundStyle(.secondary).frame(height: 14)
+                if let history = model.longHistory { HistoryCurveView(buckets: history.curve, range: history.range, drawsLine: true) }
+                else if !model.longHistoryLoading { Text(model.longHistoryIssue ?? "此范围尚无分钟历史。").font(.caption).foregroundStyle(.secondary) }
             }
             Text("进程与归属").font(.subheadline.weight(.semibold))
             Text(identityText(app)).font(.caption).foregroundStyle(.secondary)
             ForEach(Array(app.processes.prefix(32).enumerated()), id: \.offset) { _, process in
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(process.identity.name) · PID \(process.identity.pid)").font(.caption)
-                    Text(process.identity.instanceID == nil ? "启动身份未知" : "已核对系统启动身份")
+                    Text(process.identity.instanceID == nil ? "开始时间未知" : "开始时间已确认")
                         .font(.caption2).foregroundStyle(.secondary)
                     if let path = process.identity.executablePath { Text(path).font(.caption2).textSelection(.enabled).lineLimit(2) }
                 }.frame(maxWidth: .infinity, alignment: .leading)
             }
             if app.processes.count > 32 { Text("仅显示前 32 个进程；总计 \(app.processes.count) 个。").font(.caption2) }
-            Text("来源：系统 nettop 进程计数。连接数、协议、目标与防护未采集；签名未验证。")
-                .font(.caption2).foregroundStyle(.secondary)
+            DisclosureGroup("技术信息") {
+                Text("来源为系统nettop，未记录连接目标、协议或连接数；未验证应用签名。")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
         }
     }
     private func identityText(_ app: ProcessNetworkApplication) -> String {
         switch app.identity.evidence {
-        case .executableBundle: "可执行文件与应用 Bundle 路径匹配"
-        case .nestedBundle: "应用 Bundle 内的辅助进程；按实际安装路径归属"
-        case .executable: "独立可执行文件；没有已核验的应用 Bundle 归属"
-        case .unknown: "系统启动身份未确认；保持独立的未知进程"
+        case .executableBundle: "按可执行文件路径归入此应用"
+        case .nestedBundle: "应用内的辅助进程，按安装路径归属"
+        case .executable: "独立进程，应用归属尚未确认"
+        case .unknown: "进程身份尚未确认"
         }
     }
     private func noteButton(_ identity: ProcessNetworkApplicationIdentity) -> some View {
         Button { editingNote = .init(identity: identity) } label: {
             Image(systemName: "square.and.pencil")
-        }.buttonStyle(.borderless).accessibilityLabel("备注：" + identity.name)
+        }.buttonStyle(.borderless).frame(width: 20).accessibilityLabel("备注：" + identity.name)
             .accessibilityIdentifier("network.apps.note.\(identity.key)")
             .help("设置本机备注")
     }
@@ -244,7 +245,8 @@ struct ProcessNetworkApplicationsView: View {
                 keys: detail.map { [$0] } ?? model.rows.map { $0.identity.key }, now: now,
                 window: model.range.duration, includeHistory: detail != nil)
             preview = ProcessJSONDocument(data: data); showPreview = true
-        } catch { exportError = "导出超过大小上限或无法编码，请缩小时间范围后重试。" }
+        } catch ProcessNetworkExport.Failure.oversized { exportError = "导出数据过多，请从应用详情导出单个应用。" }
+        catch { exportError = "暂时无法生成导出，请重试。" }
     }
 }
 

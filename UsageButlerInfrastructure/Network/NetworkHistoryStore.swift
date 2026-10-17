@@ -15,6 +15,8 @@ struct HistoryStoreMetadata: Codable, Sendable {
     var collectionDesired = true
     var recoveredUnclean = false
     var retiredSegments: [Int64]?
+    /// Nil is legacy metadata. Zero explicitly records indefinite retention.
+    var retentionDays: Int?
 }
 
 enum HistorySchema {
@@ -34,6 +36,7 @@ enum HistorySchema {
             """)
             return
         }
+        if version == 2 { try db.execute("CREATE INDEX IF NOT EXISTS segments_day ON segments(day)"); return }
         guard version == 0 else { return }
         guard try db.scalar("SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'") == 0 else {
             throw NetworkHistoryError.unsupportedSchema
@@ -46,6 +49,7 @@ enum HistorySchema {
         CREATE INDEX applications_stable ON applications(stable);
         CREATE TABLE segments(id INTEGER PRIMARY KEY, source TEXT NOT NULL, day INTEGER NOT NULL,
             first REAL NOT NULL, last REAL NOT NULL, age REAL NOT NULL);
+        CREATE INDEX segments_day ON segments(day);
         CREATE TABLE buckets(segment INTEGER NOT NULL, app INTEGER NOT NULL, minute INTEGER NOT NULL,
             payload BLOB NOT NULL CHECK(length(payload)=56), last_observation INTEGER, PRIMARY KEY(segment,app,minute)) WITHOUT ROWID;
         CREATE TABLE hours(segment INTEGER NOT NULL, app INTEGER NOT NULL, minute INTEGER NOT NULL,
@@ -87,8 +91,11 @@ public actor NetworkHistoryStore {
         public let pageLimit: Int
         public let catalogueLimit: Int
         public let eventLimit: Int
-        public init(pageLimit: Int = 126_976, catalogueLimit: Int = 8_192, eventLimit: Int = 50_000) {
+        public let retentionDays: Int?
+        public init(pageLimit: Int = 2_147_483_646, catalogueLimit: Int = .max, eventLimit: Int = .max,
+                    retentionDays: Int? = nil) {
             self.pageLimit = pageLimit; self.catalogueLimit = catalogueLimit; self.eventLimit = eventLimit
+            self.retentionDays = retentionDays
         }
     }
     public nonisolated let databaseURL: URL
@@ -134,6 +141,14 @@ public actor NetworkHistoryStore {
         guard retired.count <= configuration.catalogueLimit, retired.allSatisfy({ $0 > 0 }),
               Set(retired).count == retired.count else { throw NetworkHistoryError.corrupt }
         initial.age.advance(clock()); metadata = initial
+        // Stop an interrupted legacy cleanup as well as future age pruning.
+        // Still-present segments retain their original dates and payloads.
+        // Already-reclaimed rows cannot be reconstructed from a tombstone.
+        if configuration.retentionDays == nil {
+            try db.execute("UPDATE segments SET age=0 WHERE age<0")
+        }
+        initial.retentionDays = configuration.retentionDays ?? 0
+        metadata = initial
         try HistorySchema.write(initial, to: db)
         // An interrupted event is evidence up to its last committed sample,
         // not evidence that it continued while the process was absent.
@@ -180,7 +195,9 @@ public actor NetworkHistoryStore {
             if segment == nil || segmentDay != day || clockChanged {
                 if clockChanged { activities.finishAll(reason: "wall-clock-changed") }
                 else if segmentDay != nil, segmentDay != day { activities.finishAll(reason: "utc-day-boundary") }
-                guard try db.scalar("SELECT count(*) FROM segments") < configuration.catalogueLimit else { throw NetworkHistoryError.capacity }
+                if configuration.catalogueLimit != .max {
+                    guard try db.scalar("SELECT count(*) FROM segments") < configuration.catalogueLimit else { throw NetworkHistoryError.capacity }
+                }
                 let highest = max(try db.scalar("SELECT COALESCE(max(id),0) FROM segments"), metadata.retiredSegments?.max() ?? 0)
                 guard highest < Int64.max else { throw NetworkHistoryError.capacity }
                 let s = try db.statement("INSERT INTO segments(id,source,day,first,last,age) VALUES(?,?,?,?,?,?)")
@@ -246,7 +263,7 @@ public actor NetworkHistoryStore {
             let segmentUpdate = try db.statement("UPDATE segments SET last=?,age=? WHERE id=?")
             segmentUpdate.bind(1, wall); segmentUpdate.bind(2, metadata.age.ageSeconds); segmentUpdate.bind(3, segment)
             try segmentUpdate.run()
-            if newSession, try db.scalar("SELECT count(*) FROM sessions") >= configuration.catalogueLimit {
+            if newSession, configuration.catalogueLimit != .max, try db.scalar("SELECT count(*) FROM sessions") >= configuration.catalogueLimit {
                 throw NetworkHistoryError.capacity
             }
             let update = try db.statement("INSERT INTO sessions VALUES(?,?,?) ON CONFLICT(source) DO UPDATE SET sequence=excluded.sequence,last=excluded.last")
@@ -274,7 +291,9 @@ public actor NetworkHistoryStore {
         let id: Int64
         if try query.next() { id = query.integer(0) }
         else {
-            guard try db.scalar("SELECT count(*) FROM applications") < configuration.catalogueLimit else { throw NetworkHistoryError.capacity }
+            if configuration.catalogueLimit != .max {
+                guard try db.scalar("SELECT count(*) FROM applications") < configuration.catalogueLimit else { throw NetworkHistoryError.capacity }
+            }
             let insert = try db.statement("INSERT INTO applications(digest,stable,identity) VALUES(?,?,?)")
             insert.bind(1, digest); insert.bind(2, identity.key); insert.bind(3, data); try insert.run(); id = sqlite3_last_insert_rowid(db.handle)
         }
@@ -311,7 +330,7 @@ public actor NetworkHistoryStore {
             let sizes = db.sizes
             if sizes.wal > 8 * 1_048_576 || checkpointPending { checkpointPending = try !db.checkpoint(allowBusy: true) }
             let after = db.sizes
-            guard after.wal <= 16 * 1_048_576, after.database + after.wal <= 512 * 1_048_576 else {
+            guard after.wal <= 16 * 1_048_576 else {
                 throw NetworkHistoryError.capacity
             }
         } catch { fail(error); throw failure ?? .corrupt }
@@ -332,6 +351,7 @@ public actor NetworkHistoryStore {
     }
     public func coverage() -> HistoryCoverage {
         var result = HistoryCoverage(); result.firstCollectedAt = metadata.first; result.lastCommittedAt = metadata.lastCommitted
+        result.retentionDays = metadata.retentionDays ?? 14
         result.retentionTrimmed = metadata.retentionTrimmed; result.conservativeAge = metadata.age.conservative
         result.eventsTruncated = metadata.eventsTruncated
         result.recoveredUncleanSession = metadata.recoveredUnclean
@@ -374,7 +394,10 @@ public actor NetworkHistoryStore {
         catch { try? db.execute("ROLLBACK"); throw error }
     }
     private func maintenanceSlice() throws {
-        let cutoff = metadata.age.ageSeconds - 14 * 86_400
+        // Historical records are not disposable cache entries. Production has
+        // no age policy; explicit finite policies are used by legacy tests.
+        guard let retentionDays = configuration.retentionDays else { return }
+        let cutoff = metadata.age.ageSeconds - Double(retentionDays) * 86_400
         if metadata.age.ageSeconds - lastRetentionAge >= 3_600 {
             lastRetentionAge = metadata.age.ageSeconds
             if cutoff > 0 {
@@ -457,8 +480,10 @@ public actor NetworkHistoryStore {
     private func writeActivities() throws {
         for activity in activities.drainChanges() {
             if activity.databaseID == nil {
-                guard try db.scalar("SELECT count(*) FROM events") < configuration.eventLimit else {
-                    metadata.eventsTruncated = true; continue
+                if configuration.eventLimit != .max {
+                    guard try db.scalar("SELECT count(*) FROM events") < configuration.eventLimit else {
+                        metadata.eventsTruncated = true; continue
+                    }
                 }
                 let s = try db.statement("INSERT INTO events(app,segment,kind,first,last,bytes,peak,duration,rule,reason) VALUES(?,?,?,?,?,?,?,?,?,?)")
                 s.bind(1, activity.app); s.bind(2, activity.segment); s.bind(3, activity.kind)

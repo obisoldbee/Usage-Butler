@@ -21,15 +21,15 @@ public final class ProcessNetworkViewModel: ObservableObject {
     }
     public var observationTitle: String {
         switch observationState {
-        case .connecting: "正在连接后台来源 · 等待采样"
-        case .requiresApproval: "等待系统允许后台运行 · 当前未观察"
-        case .notFound: "后台组件不可用 · 尚未取得新采样"
-        case .unavailable: "应用来源暂不可用 · 接口统计独立运行"
-        case .stopped, .observing(.stopped): "应用采集已停止 · 可在设置 → 网络中开启"
-        case .observing(.starting): "正在建立应用采样基线…"
-        case .observing(.active): "正在采集系统可见进程"
-        case .observing(.partial): "应用采样不完整 · 当前速率未知"
-        case .observing(.unavailable): "应用来源暂不可用 · 接口统计独立运行"
+        case .connecting: "正在读取应用流量…"
+        case .requiresApproval: "等待系统允许后台运行"
+        case .notFound: "后台组件暂不可用"
+        case .unavailable: "应用流量暂不可用"
+        case .stopped, .observing(.stopped): "应用记录已停止，可在网络设置中开启"
+        case .observing(.starting): "正在读取应用流量…"
+        case .observing(.active): "正在记录应用流量"
+        case .observing(.partial): "本次采样未完整读取，当前速率不可用"
+        case .observing(.unavailable): "应用流量暂不可用"
         }
     }
     @Published public private(set) var snapshot: ProcessNetworkSnapshot?
@@ -48,14 +48,15 @@ public final class ProcessNetworkViewModel: ObservableObject {
     @Published public var sort: Sort = .upload { didSet { rebuildRows() } }
     @Published public var onlyWatched = false { didSet { rebuildRows() } }
     @Published public private(set) var watched: Set<String> = []
-    @Published public var selected: String? { didSet { reloadLongHistory() } }
-    @Published public var range: NetworkTrendRange = .oneHour { didSet { reloadLongHistory() } }
+    @Published public var selected: String? { didSet { if selected != oldValue { reloadLongHistory() } } }
+    @Published public var range: NetworkTrendRange = .oneHour { didSet { if range != oldValue { reloadLongHistory() } } }
     @Published public private(set) var longHistory: HistoryQueryResult?
     @Published public private(set) var longHistoryIssue: String?
     @Published public private(set) var longHistoryLoading = false
     public var onLongHistory: ((String, TimeInterval) async throws -> HistoryQueryResult)?
     private var longHistoryRevision: UInt64 = 0
     private var longHistoryTask: Task<Void, Never>?
+    var currentLongHistoryTask: Task<Void, Never>? { longHistoryTask }
     private var longHistoryVisible = false
     private var lastLongHistoryRead: UInt64 = 0
     @Published public private(set) var rows: [ProcessNetworkApplication] = []

@@ -47,7 +47,7 @@ public actor NetworkHistoryQuery {
                 let identity = try db.statement("SELECT stable FROM applications WHERE id=?"); identity.bind(1, applicationID)
                 guard try identity.next() else { throw NetworkHistoryError.invalidRequest }; selectedKey = identity.text(0)
             }
-            let matching = try matchingApplications(db, search: request.scope.search, deadline: deadline)
+            let matching = try matchingApplications(db, range: range, search: request.scope.search, deadline: deadline)
             let start = range.start.timeIntervalSince1970, end = range.end.timeIntervalSince1970
             let segments = try db.statement("SELECT id,day FROM segments WHERE age>=0 AND day>=? AND day<=? ORDER BY id LIMIT 8193")
             segments.bind(1, Int64(floor(start / 86_400))); segments.bind(2, Int64(floor((end - 1) / 86_400)))
@@ -133,7 +133,8 @@ public actor NetworkHistoryQuery {
                 }
             }
             var grouped: [String: HistoryApplicationSummary] = [:]
-            let identities = try db.statement("SELECT id,stable,identity FROM applications ORDER BY id")
+            let identities = try db.statement("SELECT id,stable,identity FROM applications WHERE id IN (SELECT r.app FROM segment_apps r JOIN segments s ON s.id=r.segment WHERE s.age>=0 AND s.day>=? AND s.day<=?) ORDER BY id")
+            identities.bind(1, Int64(floor(start / 86_400))); identities.bind(2, Int64(floor((end - 1) / 86_400)))
             while try identities.next() {
                 try deadline.check(); let id = identities.integer(0)
                 guard let totals = summaries[id] else { continue }
@@ -173,6 +174,7 @@ public actor NetworkHistoryQuery {
             let context = request.context ?? .init(id: UUID().uuidString, generation: generation,
                 fingerprint: digest, createdNanoseconds: started)
             var coverage = HistoryCoverage()
+            coverage.retentionDays = metadata.retentionDays ?? 14
             coverage.firstCollectedAt = metadata.first; coverage.lastCommittedAt = metadata.lastCommitted
             coverage.retentionTrimmed = metadata.retentionTrimmed; coverage.conservativeAge = metadata.age.conservative
             coverage.eventsTruncated = metadata.eventsTruncated
@@ -193,11 +195,13 @@ public actor NetworkHistoryQuery {
             throw error
         }
     }
-    /// The catalogue is bounded by 8192 rows. Keep only numeric IDs plus one
+    /// Each query range is bounded; the permanent catalogue is not. Keep only numeric IDs plus one
     /// identity group while matching retained names, bundle IDs and paths.
-    private func matchingApplications(_ db: HistoryDatabase, search: String, deadline: QueryDeadline) throws -> Set<Int64>? {
+    private func matchingApplications(_ db: HistoryDatabase, range: HistoryRange, search: String, deadline: QueryDeadline) throws -> Set<Int64>? {
         guard !search.isEmpty else { return nil }
-        let s = try db.statement("SELECT id,stable,identity FROM applications ORDER BY stable,id LIMIT 8193")
+        let s = try db.statement("SELECT id,stable,identity FROM applications WHERE id IN (SELECT r.app FROM segment_apps r JOIN segments s ON s.id=r.segment WHERE s.age>=0 AND s.day>=? AND s.day<=?) ORDER BY stable,id LIMIT 8193")
+        s.bind(1, Int64(floor(range.start.timeIntervalSince1970 / 86_400)))
+        s.bind(2, Int64(floor((range.end.timeIntervalSince1970 - 1) / 86_400)))
         var result: Set<Int64> = [], group: [Int64] = [], key: String?, matched = false, count = 0
         while try s.next() {
             try deadline.check(); count += 1; guard count <= 8_192 else { throw NetworkHistoryError.capacity }

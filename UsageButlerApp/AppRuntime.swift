@@ -661,7 +661,7 @@ final class AppRuntime: ObservableObject {
 
         let panel = NSOpenPanel()
         panel.title = String(localized: "选择 \(Self.cliDisplayName(for: providerID))")
-        panel.message = String(localized: "选择现有的 CLI 可执行文件；额度管家不会运行安装命令。")
+        panel.message = String(localized: "选择已安装的工具可执行文件")
         panel.prompt = String(localized: "选择")
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -1049,6 +1049,8 @@ final class AppRuntime: ObservableObject {
             ProviderPreferenceKey.openAIEnabled: true,
             ProviderPreferenceKey.miniMaxEnabled: true,
             ProviderPreferenceKey.arkEnabled: true,
+            ProviderPreferenceKey.grokBotEnabled: false,
+            ProviderPreferenceKey.grokBotRefreshOverrideSeconds: -1,
             ProviderPreferenceKey.globalRefreshSeconds: 300,
             ProviderPreferenceKey.openAIRefreshOverrideSeconds: -1,
             ProviderPreferenceKey.miniMaxRefreshOverrideSeconds: -1,
@@ -1066,7 +1068,7 @@ final class AppRuntime: ObservableObject {
         ProviderID.allCases.map { providerID in
             let loginMethod: LoginMethod?
             switch providerID {
-            case .openAI: loginMethod = nil
+            case .openAI, .grokBot: loginMethod = nil
             case .miniMax: loginMethod = .oauth
             case .ark: loginMethod = .sso
             }
@@ -1074,7 +1076,7 @@ final class AppRuntime: ObservableObject {
                 contractVersion: "runtime-composition-unavailable",
                 loginMethod: loginMethod,
                 hasOfficialDocumentation: true,
-                allowsExecutableSelection: true
+                allowsExecutableSelection: providerID != .grokBot
             )
             let initialState = ProviderBootstrap.initialState(
                 id: providerID,
@@ -1119,6 +1121,7 @@ final class AppRuntime: ObservableObject {
         case .openAI: ProviderPreferenceKey.openAIEnabled
         case .miniMax: ProviderPreferenceKey.miniMaxEnabled
         case .ark: ProviderPreferenceKey.arkEnabled
+        case .grokBot: ProviderPreferenceKey.grokBotEnabled
         }
     }
 
@@ -1127,6 +1130,7 @@ final class AppRuntime: ObservableObject {
         case .openAI: ProviderPreferenceKey.openAIRefreshOverrideSeconds
         case .miniMax: ProviderPreferenceKey.miniMaxRefreshOverrideSeconds
         case .ark: ProviderPreferenceKey.arkRefreshOverrideSeconds
+        case .grokBot: ProviderPreferenceKey.grokBotRefreshOverrideSeconds
         }
     }
 
@@ -1135,6 +1139,7 @@ final class AppRuntime: ObservableObject {
         case .openAI: ProviderPreferenceKey.openAIExecutablePath
         case .miniMax: ProviderPreferenceKey.miniMaxExecutablePath
         case .ark: ProviderPreferenceKey.arkExecutablePath
+        case .grokBot: "usageButler.grokBot.noExecutable"
         }
     }
 
@@ -1143,6 +1148,7 @@ final class AppRuntime: ObservableObject {
         case .openAI: "codex"
         case .miniMax: "mmx"
         case .ark: "arkcli"
+        case .grokBot: ""
         }
     }
 
@@ -1151,6 +1157,7 @@ final class AppRuntime: ObservableObject {
         case .openAI: "Codex CLI"
         case .miniMax: "MiniMax CLI"
         case .ark: "Ark CLI"
+        case .grokBot: "Cursor 登录来源"
         }
     }
 }

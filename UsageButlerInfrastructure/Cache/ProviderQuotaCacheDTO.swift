@@ -17,8 +17,8 @@ struct ProviderQuotaCacheEnvelopeDTO: Codable {
     let source: ProviderSourceIdentityDTO
     let payload: ProviderQuotaDataDTO
 
-    init(domain data: ProviderQuotaData) throws {
-        try ProviderQuotaDomainPersistenceValidator.validate(data)
+    init(domain data: ProviderQuotaData, allowingEncryptedGrok: Bool = false) throws {
+        try ProviderQuotaDomainPersistenceValidator.validate(data, allowingEncryptedGrok: allowingEncryptedGrok)
         schema = Self.schemaIdentifier
         version = Self.formatVersion
         providerID = data.providerID
@@ -27,7 +27,7 @@ struct ProviderQuotaCacheEnvelopeDTO: Codable {
         try validatePrivacy()
     }
 
-    func domain(requestedProviderID: ProviderID) throws -> ProviderQuotaData {
+    func domain(requestedProviderID: ProviderID, grokSessionScope: String? = nil) throws -> ProviderQuotaData {
         guard schema == Self.schemaIdentifier else {
             throw ProviderQuotaCacheEnvelopeValidationError.unknownSchema
         }
@@ -41,8 +41,8 @@ struct ProviderQuotaCacheEnvelopeDTO: Codable {
         }
         try validatePrivacy()
 
-        let domain = try payload.domain(source: source.domain())
-        try ProviderQuotaDomainPersistenceValidator.validate(domain)
+        let domain = try payload.domain(source: source.domain(sessionScope: grokSessionScope))
+        try ProviderQuotaDomainPersistenceValidator.validate(domain, allowingEncryptedGrok: grokSessionScope != nil)
         return domain
     }
 
@@ -68,6 +68,7 @@ enum ProviderQuotaCacheEnvelopeValidationError: Error, Equatable {
 struct ProviderSourceIdentityDTO: Codable, Equatable {
     let providerID: ProviderID
     let adapterID: String
+    let transport: ProviderTransportIdentity?
     let executableIdentity: String
     let cliVersion: String
     let schemaVersion: String
@@ -76,20 +77,23 @@ struct ProviderSourceIdentityDTO: Codable, Equatable {
     init(_ source: ProviderSourceIdentity) {
         providerID = source.providerID
         adapterID = source.adapterID
+        transport = source.transport
         executableIdentity = source.executableIdentity
         cliVersion = source.cliVersion
         schemaVersion = source.schemaVersion
         contractVersion = source.contractVersion
     }
 
-    func domain() -> ProviderSourceIdentity {
+    func domain(sessionScope: String? = nil) -> ProviderSourceIdentity {
         ProviderSourceIdentity(
             providerID: providerID,
             adapterID: adapterID,
             executableIdentity: executableIdentity,
             cliVersion: cliVersion,
             schemaVersion: schemaVersion,
-            contractVersion: contractVersion
+            contractVersion: contractVersion,
+            transport: transport ?? .cli,
+            sessionScope: sessionScope
         )
     }
 
@@ -104,6 +108,7 @@ struct ProviderQuotaDataDTO: Codable {
     let products: [QuotaProductDTO]
     let balances: [QuotaBalanceDTO]
     let resetEntitlements: [ResetEntitlementSummaryDTO]
+    let grokBotUsage: GrokBotUsageObservation?
 
     init(_ data: ProviderQuotaData) throws {
         providerID = data.providerID
@@ -111,6 +116,7 @@ struct ProviderQuotaDataDTO: Codable {
         products = try data.products.map(QuotaProductDTO.init)
         balances = data.balances.map(QuotaBalanceDTO.init)
         resetEntitlements = data.resetEntitlements.map(ResetEntitlementSummaryDTO.init)
+        grokBotUsage = data.grokBotUsage
     }
 
     func domain(source: ProviderSourceIdentity) throws -> ProviderQuotaData {
@@ -118,6 +124,7 @@ struct ProviderQuotaDataDTO: Codable {
             providerID: providerID,
             source: source,
             fetchedAt: fetchedAt,
+            grokBotUsage: grokBotUsage,
             products: try products.map { try $0.domain(source: source, providerFetchedAt: fetchedAt) },
             balances: try balances.map { try $0.domain(source: source) },
             resetEntitlements: try resetEntitlements.map { try $0.domain(source: source) }
@@ -232,7 +239,7 @@ struct QuotaMetricDTO: Codable {
             sourceMetricID: sourceMetricID
         )
         let domainProvenance = try provenance.domain(
-            sourceIdentity: identity
+            sourceIdentity: identity, sessionScope: source.sessionScope
         )
         return QuotaMetric(
             id: MetricID(sourceIdentity: identity),
@@ -264,11 +271,12 @@ struct MetricProvenanceDTO: Codable {
     }
 
     func domain(
-        sourceIdentity: MetricSourceIdentity
+        sourceIdentity: MetricSourceIdentity,
+        sessionScope: String? = nil
     ) throws -> MetricProvenance {
         MetricProvenance(
             sourceIdentity: sourceIdentity,
-            providerSource: providerSource.domain(),
+            providerSource: providerSource.domain(sessionScope: sessionScope),
             fetchedAt: fetchedAt
         )
     }
@@ -634,7 +642,9 @@ struct UnavailableReasonDTO: Codable {
 
 struct QuotaBalanceDTO: Codable {
     let sourceBalanceID: String
-    let amount: Decimal
+    let amount: Decimal?
+    let unlimited: Bool?
+    let hasCredits: Bool?
     let unit: String
     let sourceProductID: String
     let sourceBucketID: String?
@@ -644,6 +654,8 @@ struct QuotaBalanceDTO: Codable {
     init(_ balance: QuotaBalance) {
         sourceBalanceID = balance.sourceBalanceID
         amount = balance.amount
+        unlimited = balance.unlimited
+        hasCredits = balance.hasCredits
         unit = balance.unit
         sourceProductID = balance.provenance.sourceIdentity.sourceProductID
         sourceBucketID = balance.provenance.sourceIdentity.sourceBucketID
@@ -659,11 +671,13 @@ struct QuotaBalanceDTO: Codable {
             sourceMetricID: sourceMetricID
         )
         let domainProvenance = try provenance.domain(
-            sourceIdentity: identity
+            sourceIdentity: identity, sessionScope: source.sessionScope
         )
         return QuotaBalance(
             sourceBalanceID: sourceBalanceID,
             amount: amount,
+            unlimited: unlimited ?? false,
+            hasCredits: hasCredits,
             unit: unit,
             provenance: domainProvenance,
             state: CachedQuotaNodeState.make(asOf: domainProvenance.fetchedAt)
@@ -705,7 +719,7 @@ struct ResetEntitlementSummaryDTO: Codable {
             availableCount: availableCount,
             details: details?.map { $0.domain() },
             provenance: try provenance.domain(
-                sourceIdentity: identity
+                sourceIdentity: identity, sessionScope: source.sessionScope
             ),
             state: CachedQuotaNodeState.make(asOf: provenance.fetchedAt)
         )
@@ -768,7 +782,7 @@ private enum CachedQuotaNodeState {
 }
 
 private enum ProviderQuotaDomainPersistenceValidator {
-    static func validate(_ data: ProviderQuotaData) throws {
+    static func validate(_ data: ProviderQuotaData, allowingEncryptedGrok: Bool = false) throws {
         do {
             try ProviderQuotaIdentityValidator.validate(
                 data,
@@ -784,13 +798,19 @@ private enum ProviderQuotaDomainPersistenceValidator {
         }
         sources += data.balances.map(\.provenance.providerSource)
         sources += data.resetEntitlements.map(\.provenance.providerSource)
+        if data.providerID == .grokBot {
+            guard allowingEncryptedGrok, data.grokBotUsage != nil,
+                  sources.allSatisfy({ $0 == data.source }) else { throw ProviderQuotaPersistenceDTOError.invalidIdentity }
+            return
+        }
         guard sources.allSatisfy(isCompleteSourceIdentity) else {
             throw ProviderQuotaPersistenceDTOError.invalidIdentity
         }
     }
 
     private static func isCompleteSourceIdentity(_ source: ProviderSourceIdentity) -> Bool {
-        !source.adapterID.isEmpty
+        source.providerID != .grokBot
+            && !source.adapterID.isEmpty
             && !source.executableIdentity.isEmpty
             && !source.cliVersion.isEmpty
             && !source.schemaVersion.isEmpty

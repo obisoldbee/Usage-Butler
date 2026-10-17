@@ -1121,3 +1121,21 @@ final class LiveProviderProjectionMapperTests: XCTestCase {
         )
     }
 }
+
+
+extension LiveProviderProjectionMapperTests {
+    func testAvailableResetDetailWithoutExpiryIsPreservedAsUnknown() throws {
+        let expiry = fetchedAt.addingTimeInterval(200)
+        let reset = resetEntitlement(availableCount: 2, details: [
+            .init(sourceID: "unknown", status: "available", grantedAt: nil, expiresAt: nil, title: "Unknown date"),
+            .init(sourceID: "dated", status: "available", grantedAt: nil, expiresAt: expiry, title: "Dated"),
+            .init(sourceID: "used", status: "consumed", grantedAt: nil, expiresAt: expiry, title: "Used")])
+        let projection = LiveProviderProjectionMapper.map(providerState(providerID: .openAI,
+            quota: quota(providerID: .openAI, products: [], resetEntitlements: [reset])), now: fixedNow)
+        let metric = try XCTUnwrap(projection.products.first?.metrics.first)
+        XCTAssertEqual(metric.value, .entitlement(availableCount: 2))
+        XCTAssertEqual(metric.event?.occursAt, expiry)
+        XCTAssertEqual(metric.resetEntitlements?.map(\.id), ["dated", "unknown"])
+        XCTAssertEqual(metric.resetEntitlements?.last?.expiresAt, nil)
+    }
+}

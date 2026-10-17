@@ -49,7 +49,7 @@ final class SettingsPresentationBridge {
         let wasPending = requested
         requested = true
         guard openScene != nil || window?.hasSettingsContent == true else {
-            report("设置入口尚未就绪，已保留打开请求；场景就绪后执行。")
+            report("正在准备设置窗口…")
             return .waitingForScene
         }
         scheduleIfReady()

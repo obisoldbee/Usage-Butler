@@ -82,10 +82,12 @@ enum ProductionRuntimeFactory {
                 defaults: defaults
             )
         )
+        let grokBotAdapter = GrokBotProviderAdapter()
         let adapters: [any ProviderAdapter] = [
             openAIAdapter,
             miniMaxAdapter,
-            arkAdapter
+            arkAdapter,
+            grokBotAdapter
         ]
 
         let clock = SystemClockPort()
@@ -97,7 +99,9 @@ enum ProductionRuntimeFactory {
 
         for adapter in adapters {
             let cache: any ProviderQuotaCache
-            if let cacheConfiguration {
+            if adapter.id == .grokBot, let cacheConfiguration {
+                cache = GrokBotEncryptedQuotaCache(configuration: cacheConfiguration, authorization: { await grokBotAdapter.quotaCacheAssociation() })
+            } else if let cacheConfiguration {
                 cache = ProviderQuotaDiskCache(configuration: cacheConfiguration)
             } else {
                 cache = RuntimeVolatileProviderQuotaCache()
@@ -485,6 +489,7 @@ enum ProductionRuntimeFactory {
         case .openAI: ProviderPreferenceKey.openAIEnabled
         case .miniMax: ProviderPreferenceKey.miniMaxEnabled
         case .ark: ProviderPreferenceKey.arkEnabled
+        case .grokBot: ProviderPreferenceKey.grokBotEnabled
         }
     }
 
@@ -493,6 +498,7 @@ enum ProductionRuntimeFactory {
         case .openAI: ProviderPreferenceKey.openAIRefreshOverrideSeconds
         case .miniMax: ProviderPreferenceKey.miniMaxRefreshOverrideSeconds
         case .ark: ProviderPreferenceKey.arkRefreshOverrideSeconds
+        case .grokBot: ProviderPreferenceKey.grokBotRefreshOverrideSeconds
         }
     }
 
@@ -501,6 +507,7 @@ enum ProductionRuntimeFactory {
         case .openAI: ProviderPreferenceKey.openAIExecutablePath
         case .miniMax: ProviderPreferenceKey.miniMaxExecutablePath
         case .ark: ProviderPreferenceKey.arkExecutablePath
+        case .grokBot: "usageButler.grokBot.noExecutable"
         }
     }
 

@@ -3219,6 +3219,259 @@
           }
         }
       }
+    },
+    "允许后，只读 Cursor 的 User/globalStorage/state.vscdb 中指定登录键，用于向 cursor.com 核对账户与查询 Grok / Cursor 共享周额度。会话仅在内存使用。关闭开关即撤销、取消请求并清除本次额度。无此来源时请先在 Cursor 登录。共享周用量和月额外用量分别显示。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许后，只读 Cursor 的 User/globalStorage/state.vscdb 中指定登录键，用于向 cursor.com 核对账户与查询 Grok / Cursor 共享周额度。会话仅在内存使用。关闭开关即撤销、取消请求并清除本次额度。无此来源时请先在 Cursor 登录。共享周用量和月额外用量分别显示。"
+          }
+        }
+      }
+    },
+    "Grok / Cursor 共享周额度": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Grok / Cursor 共享周额度"
+          }
+        }
+      }
+    },
+    "周用量未提供": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周用量未提供"
+          }
+        }
+      }
+    },
+    "周预算为零": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周预算为零"
+          }
+        }
+      }
+    },
+    "周用量数值无效": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周用量数值无效"
+          }
+        }
+      }
+    },
+    "已超出周额度": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已超出周额度"
+          }
+        }
+      }
+    },
+    "共享周额度不适用": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共享周额度不适用"
+          }
+        }
+      }
+    },
+    "周额度暂不可用": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周额度暂不可用"
+          }
+        }
+      }
+    },
+    "官方尚未提供此账户的共享用量。请在官方页面核对账户关联。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "官方尚未提供此账户的共享用量。请在官方页面核对账户关联。"
+          }
+        }
+      }
+    },
+    "官方返回了团队作用域错误，请重试并核对账户。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "官方返回了团队作用域错误，请重试并核对账户。"
+          }
+        }
+      }
+    },
+    "共享用量状态未提供，请稍后重试。": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "共享用量状态未提供，请稍后重试。"
+          }
+        }
+      }
+    },
+    "收起用量详情": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "收起用量详情"
+          }
+        }
+      }
+    },
+    "展开用量详情": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "展开用量详情"
+          }
+        }
+      }
+    },
+    "未提供": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未提供"
+          }
+        }
+      }
+    },
+    "来源数值无效": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来源数值无效"
+          }
+        }
+      }
+    },
+    "额外积分余额未提供": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "额外积分余额未提供"
+          }
+        }
+      }
+    },
+    "已用 %lld%%": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已用 %lld%%"
+          }
+        }
+      }
+    },
+    "周已用 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周已用 %@"
+          }
+        }
+      }
+    },
+    "周剩余 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "周剩余 %@"
+          }
+        }
+      }
+    },
+    "本月额外用量 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本月额外用量 %@"
+          }
+        }
+      }
+    },
+    "本月额外用量限额 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本月额外用量限额 %@"
+          }
+        }
+      }
+    },
+    "本月积分已用 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本月积分已用 %@"
+          }
+        }
+      }
+    },
+    "月用量重置 %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "月用量重置 %@"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

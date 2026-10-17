@@ -100,6 +100,8 @@ public enum Stage3QuotaValue: Equatable, Sendable {
     case unlimited
     case usedCount(used: Int, total: Int, unit: String)
     case entitlement(availableCount: Int)
+    case balance(amount: Decimal?, unlimited: Bool)
+    case unavailable
 
     public var progressFraction: Double? {
         guard case let .percent(value, _) = self, value.isFinite else { return nil }
@@ -133,9 +135,9 @@ public struct Stage3TimeEvent: Equatable, Sendable {
 public struct Stage3ResetEntitlementItem: Equatable, Identifiable, Sendable {
     public let id: String
     public let title: String?
-    public let expiresAt: Date
+    public let expiresAt: Date?
 
-    public init(id: String, title: String?, expiresAt: Date) {
+    public init(id: String, title: String?, expiresAt: Date?) {
         self.id = id
         self.title = title
         self.expiresAt = expiresAt
@@ -150,6 +152,8 @@ public struct Stage3QuotaMetricProjection: Equatable, Identifiable, Sendable {
     public let event: Stage3TimeEvent?
     public let dataState: Stage3QuotaMetricDataState?
     public let resetEntitlements: [Stage3ResetEntitlementItem]?
+    public let displayValueText: String?
+    public let detailText: String?
 
     public init(
         id: String,
@@ -158,7 +162,9 @@ public struct Stage3QuotaMetricProjection: Equatable, Identifiable, Sendable {
         value: Stage3QuotaValue,
         event: Stage3TimeEvent? = nil,
         dataState: Stage3QuotaMetricDataState? = nil,
-        resetEntitlements: [Stage3ResetEntitlementItem]? = nil
+        resetEntitlements: [Stage3ResetEntitlementItem]? = nil,
+        displayValueText: String? = nil,
+        detailText: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -167,6 +173,8 @@ public struct Stage3QuotaMetricProjection: Equatable, Identifiable, Sendable {
         self.event = event
         self.dataState = dataState
         self.resetEntitlements = resetEntitlements
+        self.displayValueText = displayValueText
+        self.detailText = detailText
     }
 }
 
@@ -207,6 +215,7 @@ public struct Stage3ProviderProjection: Equatable, Identifiable, Sendable {
     public let hasOfficialDocumentation: Bool
     public let allowsExecutableSelection: Bool
     public let planLevel: Stage3PlanBadge?
+    public let sourceNotice: String?
     public let products: [Stage3QuotaProductProjection]
     public let capturedAt: Date
     public let origin: Stage3DataOrigin
@@ -226,6 +235,7 @@ public struct Stage3ProviderProjection: Equatable, Identifiable, Sendable {
         hasOfficialDocumentation: Bool = false,
         allowsExecutableSelection: Bool = false,
         planLevel: Stage3PlanBadge? = nil,
+        sourceNotice: String? = nil,
         products: [Stage3QuotaProductProjection],
         capturedAt: Date,
         origin: Stage3DataOrigin
@@ -244,6 +254,7 @@ public struct Stage3ProviderProjection: Equatable, Identifiable, Sendable {
         self.hasOfficialDocumentation = hasOfficialDocumentation
         self.allowsExecutableSelection = allowsExecutableSelection
         self.planLevel = planLevel
+        self.sourceNotice = sourceNotice
         self.products = products
         self.capturedAt = capturedAt
         self.origin = origin
@@ -265,6 +276,7 @@ public struct Stage3ProviderProjection: Equatable, Identifiable, Sendable {
             hasOfficialDocumentation: hasOfficialDocumentation,
             allowsExecutableSelection: allowsExecutableSelection,
             planLevel: planLevel,
+            sourceNotice: sourceNotice,
             products: newProducts,
             capturedAt: capturedAt,
             origin: origin

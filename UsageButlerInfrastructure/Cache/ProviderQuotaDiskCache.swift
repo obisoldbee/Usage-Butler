@@ -15,6 +15,7 @@ public actor ProviderQuotaDiskCache: ProviderQuotaCache {
     private let configuration: ProviderQuotaDiskCacheConfiguration
     private let now: @Sendable () -> Date
     private var acceptsOperations = true
+    private var protectedGrokRevision: UInt64 = 0
 
     public init(
         configuration: ProviderQuotaDiskCacheConfiguration,
@@ -144,6 +145,7 @@ public actor ProviderQuotaDiskCache: ProviderQuotaCache {
     }
 
     public func clear(providerID: ProviderID) async -> ProviderQuotaCacheClearResult {
+        if providerID == .grokBot { protectedGrokRevision &+= 1 }
         guard acceptsOperations else {
             return .failure(ProviderQuotaCacheFailure.shutdown())
         }
@@ -179,6 +181,29 @@ public actor ProviderQuotaDiskCache: ProviderQuotaCache {
         } catch {
             return .failure(ProviderQuotaCacheFailure.unavailable("cache.clear.unknown"))
         }
+    }
+
+    func grokProtectedRevision() -> UInt64 { protectedGrokRevision }
+
+    func readProtectedGrokEntry() throws -> Data? {
+        guard acceptsOperations else { throw ProviderQuotaCacheFailure.shutdown() }
+        let directory = try openCacheDirectory()
+        defer { Darwin.close(directory) }
+        let name = Self.cacheFileName(for: .grokBot)
+        if case .missing = try inspectEntry(named: name, in: directory, enforceByteLimit: true) { return nil }
+        return try readEntry(named: name, in: directory, byteLimit: configuration.maximumFileBytes)
+    }
+
+    /// Revision comparison and atomic replacement have no actor suspension between them.
+    func writeProtectedGrokEntry(_ bytes: Data, expectedRevision: UInt64) throws -> Bool {
+        guard acceptsOperations, expectedRevision == protectedGrokRevision else { return false }
+        guard bytes.count <= configuration.maximumFileBytes else { throw ProviderQuotaCacheFailure.rejected("cache.grok.oversized") }
+        let directory = try openCacheDirectory()
+        defer { Darwin.close(directory) }
+        let name = Self.cacheFileName(for: .grokBot)
+        _ = try inspectEntry(named: name, in: directory, enforceByteLimit: false)
+        try atomicallyReplace(entryNamed: name, with: bytes, in: directory)
+        return true
     }
 
     public func shutdown() async {

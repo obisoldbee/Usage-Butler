@@ -300,23 +300,21 @@ enum OpenAIQuotaDomainMapper {
         source: ProviderSourceIdentity,
         fetchedAt: Date
     ) -> BalanceMapping {
-        guard let rawBalance = credits.balance else {
-            return .success(nil)
-        }
-
         let amount: Decimal?
-        switch rawBalance {
+        switch credits.balance {
         case let .string(value):
-            amount = Decimal(
-                string: value.trimmingCharacters(in: .whitespacesAndNewlines),
-                locale: posixLocale
-            )
+            let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard text.range(of: #"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"#, options: .regularExpression) != nil else { return .invalid }
+            amount = Decimal(string: text, locale: posixLocale)
         case let .number(value):
             amount = value.isFinite ? decimal(from: value) : nil
         case .boolean:
+            return .invalid
+        case nil:
             amount = nil
         }
-        guard let amount else { return .invalid }
+        if let amount, amount.isNaN || amount < 0 { return .invalid }
+        if credits.balance != nil && amount == nil { return .invalid }
 
         let identity = MetricSourceIdentity(
             providerID: .openAI,
@@ -328,6 +326,8 @@ enum OpenAIQuotaDomainMapper {
             QuotaBalance(
                 sourceBalanceID: "\(productID).credits.balance",
                 amount: amount,
+                unlimited: credits.unlimited == true,
+                hasCredits: credits.hasCredits,
                 unit: "credits",
                 provenance: MetricProvenance(
                     sourceIdentity: identity,

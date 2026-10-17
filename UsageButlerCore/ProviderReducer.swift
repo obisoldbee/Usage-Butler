@@ -22,6 +22,7 @@ public enum ProviderEvent: Equatable, Sendable {
     case cacheLoaded(ProviderQuotaData)
     case cacheLoadFailed(ProviderFailure)
     case cacheCleared
+    case sourceIdentityChanged
     case operationsCancelled
     case refreshStarted(scope: ProviderScope, generation: UInt64)
     case refreshSucceeded(ProviderQuotaData)
@@ -68,6 +69,15 @@ public enum ProviderReducer {
         case .cacheCleared:
             next.lastGood = nil
             next.freshness = .unknown
+            next.persistence = .healthy(lastReadAt: now, lastWriteAt: nil)
+
+        case .sourceIdentityChanged:
+            next.lastGood = nil
+            next.refresh.lastSuccessAt = nil
+            next.freshness = .unknown
+            next.presence = .unknown
+            next.authentication = .unknown(.init(authority: .initialDetection, observedAt: now))
+            next.scopedFailures.removeAll()
             next.persistence = .healthy(lastReadAt: now, lastWriteAt: nil)
 
         case .operationsCancelled:
@@ -601,6 +611,7 @@ public enum ProviderReducer {
             providerID: data.providerID,
             source: data.source,
             fetchedAt: data.fetchedAt,
+            grokBotUsage: data.grokBotUsage,
             products: data.products.map {
                 markingAllNodesStale(
                     in: $0,
@@ -612,6 +623,8 @@ public enum ProviderReducer {
                 QuotaBalance(
                     sourceBalanceID: balance.sourceBalanceID,
                     amount: balance.amount,
+                    unlimited: balance.unlimited,
+                    hasCredits: balance.hasCredits,
                     unit: balance.unit,
                     provenance: balance.provenance,
                     state: markingStale(
@@ -687,6 +700,7 @@ public enum ProviderReducer {
             providerID: data.providerID,
             source: data.source,
             fetchedAt: data.fetchedAt,
+            grokBotUsage: data.grokBotUsage,
             products: data.products.map { product in
                 QuotaProductData(
                     id: product.id,
@@ -723,6 +737,8 @@ public enum ProviderReducer {
                 QuotaBalance(
                     sourceBalanceID: balance.sourceBalanceID,
                     amount: balance.amount,
+                    unlimited: balance.unlimited,
+                    hasCredits: balance.hasCredits,
                     unit: balance.unit,
                     provenance: balance.provenance,
                     state: aging(

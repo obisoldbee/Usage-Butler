@@ -10,7 +10,7 @@ struct NetworkSettingsView: View {
             SettingsSection(title: String(localized: "网络采集")) {
                 SettingsRow(
                     title: String(localized: "采集网络用量"),
-                    subtitle: String(localized: "同时设置接口与应用后台采集；实际后台状态见上方")
+                    subtitle: String(localized: "控制接口趋势和应用记录")
                 ) {
                     // Show the collector's acknowledged state, not an optimistic preference.
                     Toggle("采集网络用量", isOn: Binding(
@@ -50,8 +50,8 @@ struct NetworkSettingsView: View {
                         }
                     }
                     .accessibilityIdentifier("settings.network.interfacePicker")
-                    Text("自动会跟随系统当前连接的网络，通常无需修改。")
-                    Text("手动选择仅用于排查 VPN 隧道、网桥或本机回环流量。只改变接口趋势，不影响应用统计，也不会切换网络连接。")
+                    Text("自动跟随当前网络。")
+                    Text("手动选择只改变接口趋势，不影响应用统计，也不会切换网络连接。")
                         .foregroundStyle(.secondary)
                     Divider()
                     if !model.networkObservationLabel.isEmpty {
@@ -64,11 +64,12 @@ struct NetworkSettingsView: View {
                 .padding(12)
             }
 
-            SettingsSection(title: String(localized: "功能范围")) {
-                ProcessNetworkSourceStatus(model: model.processNetwork)
+            SettingsSection(title: String(localized: "统计说明")) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("接口趋势统计所选网络；应用活动独立统计系统可见进程。")
-                    Text("应用来源为系统 nettop。连接目标、协议、连接数及连接阻断尚未提供。")
+                    Text("接口与应用分别统计，不能相加。应用流量包含本机通信和代理转发，可能重复计数。")
+                    Text("“本段累计”从最近一次有效读数开始；读数中断、重新计数或接口变化后会重新开始。")
+                    Text("接口趋势显示本次运行的最近2小时。应用最近1分钟显示逐次读数，更早记录按分钟汇总并持续保留。")
+                    Text("仅记录流量，不阻断连接，也不记录连接目标或传输内容；可能漏掉运行时间很短的进程。")
                 }
                 .font(.callout).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -76,18 +77,8 @@ struct NetworkSettingsView: View {
                 .accessibilityIdentifier("settings.network.capabilities")
             }
 
-            SettingsSection(title: String(localized: "统计说明")) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("接口与应用是不同统计口径，不能相加。应用统计包含来源计入的回环和代理腿，不是外网账单；无法看到所有短命进程。")
-                    Text("“本段累计”从各方向最近一次有效起点计算；计数重置、缺失或接口变化后会重新开始。")
-                    Text("接口趋势保留本次主程序运行的最近2小时；应用后台保存14天分钟记录。应用最近1分钟显示原始采样，更长范围显示分钟均速及真实采样峰值。")
-                    Text("上传、下载独立缩放，两张图同样高不代表速率相同。未采集或已清理的时段不会补零；分钟归桶保留边界说明。")
-                }
-                .font(.callout).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-            }
-
+            DisclosureGroup("技术信息") {
+                ProcessNetworkSourceStatus(model: model.processNetwork)
             SettingsSection(title: String(localized: "当前采样信息")) {
                 VStack(alignment: .leading, spacing: 6) {
                     if let name = model.resolvedNetworkInterfaceName,
@@ -106,6 +97,7 @@ struct NetworkSettingsView: View {
                 .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
+            }
             }
         }
     }

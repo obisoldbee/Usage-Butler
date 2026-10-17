@@ -51,20 +51,31 @@ struct NetworkHistoryView: View {
             Picker("历史范围", selection: $model.range) {
                 ForEach(BackgroundNetworkViewModel.Range.allCases) { Text($0.title).tag($0) }
             }.pickerStyle(.segmented).accessibilityIdentifier("network.history.range")
+            HStack {
+                DatePicker("截至", selection: Binding(get: { model.currentHistoryEnd }, set: { model.historyEnd = $0 }),
+                           in: Date(timeIntervalSince1970: 0)...Date(), displayedComponents: [.date, .hourAndMinute])
+                    .accessibilityIdentifier("network.history.endDate")
+                Button("现在") { model.historyEnd = nil }.disabled(model.historyEnd == nil)
+                    .accessibilityIdentifier("network.history.now")
+                Spacer(minLength: 0)
+            }
             if model.selectedApplication == nil {
                 HStack {
-                    TextField("搜索历史应用名称、标识或路径", text: $model.search)
+                    TextField("搜索原名、应用标识或路径", text: $model.search)
                         .textFieldStyle(.roundedBorder).accessibilityIdentifier("network.history.search")
                     if !model.search.isEmpty {
                         Button("清除") { model.search = "" }.accessibilityIdentifier("network.history.search.clear")
                     }
                 }
-                Text("搜索整个所选范围，包含已退出应用及保留的身份名称。")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            Text("后台状态：" + model.serviceTitle).font(.caption).foregroundStyle(.secondary)
-            if model.loading { ProgressView("读取已提交历史…").controlSize(.small) }
-            if let issue = model.queryIssue { Text(issue).font(.caption).foregroundStyle(.orange) }
+            Text(model.serviceTitle).font(.caption).foregroundStyle(.secondary)
+            if model.loading { ProgressView("正在读取历史…").controlSize(.small) }
+            if let issue = model.queryIssue {
+                Text(issue).font(.caption).foregroundStyle(.orange)
+                if let code = model.queryDiagnosticCode {
+                    DisclosureGroup("诊断信息") { Text(code).font(.caption).textSelection(.enabled) }
+                }
+            }
             if let notice = model.navigationNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
             if let result = model.result {
                 Text("所选范围  \(result.range.start.formatted(date: .abbreviated, time: .shortened)) — \(result.range.end.formatted(date: .abbreviated, time: .shortened))")
@@ -78,9 +89,9 @@ struct NetworkHistoryView: View {
                             noteButton(app.identity)
                         }
                         HStack(spacing: 24) {
-                            Label("已观察上传  " + NetworkPresentation.bytes(HistoryCurvePresentation.observedBytes(app.totals, upload: true)), systemImage: "arrow.up")
+                            Label("上传量  " + NetworkPresentation.bytes(HistoryCurvePresentation.observedBytes(app.totals, upload: true)), systemImage: "arrow.up")
                                 .foregroundStyle(NetworkPresentation.uploadColor)
-                            Label("已观察下载  " + NetworkPresentation.bytes(HistoryCurvePresentation.observedBytes(app.totals, upload: false)), systemImage: "arrow.down")
+                            Label("下载量  " + NetworkPresentation.bytes(HistoryCurvePresentation.observedBytes(app.totals, upload: false)), systemImage: "arrow.down")
                                 .foregroundStyle(NetworkPresentation.downloadColor)
                         }.font(.headline).monospacedDigit()
                     } else { Text(HistoryCurvePresentation.emptyText(result)).font(.callout).foregroundStyle(.secondary) }
@@ -88,14 +99,19 @@ struct NetworkHistoryView: View {
                         Text(notice).font(.caption).foregroundStyle(.secondary)
                             .accessibilityIdentifier("network.history.recordingStart")
                     }
+                    if let app = result.applications.first {
+                        let notices = HistoryRecordingCopy.notices(app.totals.quality)
+                        if !notices.isEmpty {
+                            DisclosureGroup("记录情况") {
+                                ForEach(notices, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) }
+                            }.accessibilityIdentifier("network.history.recordingConditions")
+                        }
+                    }
                     HistoryCurveView(buckets: result.curve, range: result.range)
                         .id(result.contract?.context.id)
                     Text(HistoryCurvePresentation.trafficScope).font(.caption).foregroundStyle(.secondary)
                 } else {
-                    if let notice = HistoryCurvePresentation.historyNotice(coverage: result.coverage, range: result.range) {
-                        Text(notice).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text("按已观察上传排序").font(.caption).foregroundStyle(.secondary)
+                    Text("按上传量排序").font(.caption).foregroundStyle(.secondary)
                     ForEach(result.applications) { app in
                         HStack(spacing: 12) {
                         Button { model.openApplication(app) } label: {
@@ -103,10 +119,16 @@ struct NetworkHistoryView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     ApplicationNameView(identity: app.identity, notes: notes)
                                     if app.identityOrder == .legacyUnverified {
-                                        Text("旧数据：身份顺序未验证").font(.caption2).foregroundStyle(.secondary)
+                                        Text("旧记录中的应用名称可能与现在不同").font(.caption2).foregroundStyle(.secondary)
                                     }
-                                    if !app.totals.quality.subtracting(.minuteBoundary).isEmpty { Text("包含质量提示，详见应用记录").font(.caption2).foregroundStyle(.secondary) }
                                 }.frame(maxWidth: .infinity, alignment: .leading)
+                                if !HistoryRecordingCopy.notices(app.totals.quality).isEmpty {
+                                    Image(systemName: "info.circle")
+                                        .foregroundStyle(.secondary)
+                                        .help(HistoryRecordingCopy.notices(app.totals.quality).joined(separator: "；"))
+                                        .accessibilityLabel("记录情况")
+                                        .accessibilityValue(HistoryRecordingCopy.notices(app.totals.quality).joined(separator: "；"))
+                                }
                                 Text("↑ \(NetworkPresentation.bytes(app.totals.upload))").foregroundStyle(NetworkPresentation.uploadColor)
                                 Text("↓ \(NetworkPresentation.bytes(app.totals.download))").foregroundStyle(NetworkPresentation.downloadColor)
                             }.font(.caption).monospacedDigit().padding(.vertical, 5).contentShape(Rectangle())
@@ -125,8 +147,8 @@ struct NetworkHistoryView: View {
                     coverage(result)
                     if model.selectedApplication != nil, let app = result.applications.first {
                         Text(app.identityOrder == .observed
-                             ? "所选应用在范围内含 \(app.identitySnapshotCount) 份身份快照；显示最近观察到的名称。"
-                             : "所选应用含 \(app.identitySnapshotCount) 份旧身份快照；观察顺序未记录，名称不代表最近身份。")
+                             ? "应用信息记录 \(app.identitySnapshotCount) 份，显示所选范围内最后记录的名称。"
+                             : "旧应用信息记录 \(app.identitySnapshotCount) 份，先后顺序未知。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }.accessibilityIdentifier("network.history.diagnostics")
@@ -138,8 +160,6 @@ struct NetworkHistoryView: View {
                                 Text("↑ \(NetworkPresentation.bytes(day.totals.upload))  ↓ \(NetworkPresentation.bytes(day.totals.download))")
                             }.font(.caption).monospacedDigit()
                         }
-                        Text("只加总实际观察字节；多个应用的观察时长不能当作设备覆盖率。")
-                            .font(.caption2).foregroundStyle(.secondary)
                     }
                 }
                 Divider()
@@ -149,17 +169,17 @@ struct NetworkHistoryView: View {
                     Text("大量上传").tag(String?("large"))
                     Text("持续上传").tag(String?("sustained"))
                 }.pickerStyle(.segmented).accessibilityIdentifier("network.history.eventsFilter")
-                Text("本地筛选记录，不判断恶意、打包或前台状态。跨范围的活动显示整段字节，可能超过该范围内用量。")
+                Text("只记录达到上传阈值的活动；跨出所选时间的活动会显示整段用量。")
                     .font(.caption2).foregroundStyle(.secondary)
                 ForEach(result.events) { event in
                     Button { model.openEvent(event) } label: {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("\(event.name) · \(event.kind == "large" ? "大量上传" : "持续上传")").font(.caption.weight(.medium))
                         Text("\(event.start.formatted(date: .abbreviated, time: .standard)) — \(event.end.formatted(date: .abbreviated, time: .standard))")
-                        Text("整段观察 ↑ \(NetworkPresentation.bytes(event.bytes)) · 采样峰值 \(NetworkPresentation.rate(event.peak)) · \(Int(event.observedSeconds)) 秒")
+                        Text("整段上传 ↑ \(NetworkPresentation.bytes(event.bytes)) · 最高采样速率 \(NetworkPresentation.rate(event.peak)) · \(Int(event.observedSeconds)) 秒")
                         Text(event.kind == "large" ? "当时阈值：连续段 ≥ \(NetworkPresentation.bytes(event.rule.largeBytes))" :
                             HistoryUploadRuleFields.sustainedThreshold(event.rule))
-                        if let reason = event.endReason { Text("分段原因：\(reason)") }
+                        if let reason = event.endReason { Text("结束原因  " + HistoryRecordingCopy.endReason(reason)).help(reason) }
                     }.font(.caption2).foregroundStyle(.secondary).padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading).background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 6))
                     }.buttonStyle(.plain).disabled(model.selectedApplication != nil)
@@ -169,10 +189,10 @@ struct NetworkHistoryView: View {
                         .accessibilityHint("查看此活动所属应用的历史")
                         .onAppear { restoreFocus(for: .event(event.id)) }
                 }
-                if result.events.isEmpty { Text("此页没有符合采集时阈值的上传活动；不代表没有上传或未采时段没有流量。").font(.caption).foregroundStyle(.secondary) }
+                if result.events.isEmpty { Text("本页没有达到记录阈值的上传活动").font(.caption).foregroundStyle(.secondary) }
                 HStack {
                     Button("上一页") { model.previousPage() }.disabled(model.page == 0 || model.loading)
-                    Text("第 \(model.page + 1) 页 · 每页最多 64 条").font(.caption2)
+                    Text("第 \(model.page + 1) 页").font(.caption2)
                     Spacer()
                     Button("下一页") { model.nextPage() }
                         .disabled(model.loading || model.page >= 1023 || (model.page + 1) * 64 >= max(result.totalApplications, result.contract?.totalEvents ?? 0))
@@ -208,7 +228,9 @@ struct NetworkHistoryView: View {
         .sheet(isPresented: $showingPreview) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("历史 JSON 导出预览").font(.headline)
-                Text("冻结当前范围、应用选择、活动筛选、搜索生效状态及当前页；日汇总覆盖整个匹配范围，不随页码或活动类型缩小。默认别名化，不含搜索原文、名称、路径、PID 或目标；别名化不等于匿名。").font(.caption)
+                Text(model.selectedApplication == nil ? "导出当前页的应用和上传活动。" : "导出当前应用和当前页的上传活动。").font(.caption)
+                Text("每日汇总包含所选时间内匹配应用的全部记录，不受页码或活动类型影响。").font(.caption)
+                Text("应用使用编号，文件不含名称、路径、PID、搜索原文或连接目标。用量和时间仍可能帮助识别来源。").font(.caption).foregroundStyle(.secondary)
                 ScrollView { Text(preview?.text ?? "").font(.system(.caption2, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
                 HStack {
                     Button("取消") { showingPreview = false; preview = nil }.keyboardShortcut(.cancelAction)
@@ -238,13 +260,16 @@ struct NetworkHistoryView: View {
         let c = result.coverage
         VStack(alignment: .leading, spacing: 4) {
             if let date = c.lastCommittedAt { Text("最近已保存：\(date.formatted(date: .abbreviated, time: .standard))") }
-            if let date = c.firstCollectedAt { Text("首次开始记录时的系统时间：\(date.formatted(date: .abbreviated, time: .standard)) · 默认保留 14 天") }
-            Text("全局源样本 \(c.sourceSamples) 次 · 不完整采样 \(c.sourcePartialSamples) 次 · 无法归属记录 \(c.unattributedSamples) 次")
-            Text("停止、休眠和来源缺口留空；分钟内只观察到部分时间时，不记作完整一分钟。")
+            if let date = c.firstCollectedAt { Text("首次记录时的系统时间  \(date.formatted(date: .abbreviated, time: .standard))") }
+            Text("采样 \(c.sourceSamples) 次")
+            Text("未完整读取 \(c.sourcePartialSamples) 次")
+            Text("无法对应应用的记录 \(c.unattributedSamples) 次")
+            if let code = model.queryDiagnosticCode { Text("历史诊断代码  " + code).textSelection(.enabled) }
+            Text("没有记录的时段留空；不足一分钟的采样不计作完整一分钟。")
             if c.retentionTrimmed { Text("较早记录已按保留期限清理；被清理时段不表示零流量。") }
             if c.eventsTruncated { Text("活动列表已触及容量限制；基础分钟记录仍独立保存。") }
-            if c.recoveredUncleanSession { Text("上次服务未正常关闭：最后确认提交之后尚未保存的记录可能缺失。正常目标约每5秒提交，调度停顿可能延长；停机期间为未观察。") }
-            if c.conservativeAge { Text("跨启动的离线时长无法核实，部分记录会保守多保留。") }
+            if c.recoveredUncleanSession { Text("上次后台异常退出，最后一批记录可能未保存。") }
+            if c.conservativeAge { Text("部分旧记录的保存时间无法核实，已暂时保留。") }
         }.font(.caption).foregroundStyle(.secondary)
     }
     private func noteButton(_ identity: ProcessNetworkApplicationIdentity) -> some View {
@@ -257,7 +282,7 @@ struct NetworkHistoryView: View {
     private func prepareExport() {
         guard let result = model.result else { return }
         do { preview = .init(data: try NetworkHistoryExport.encode(result)); showingPreview = true }
-        catch { exportError = "无法生成有界导出，请缩小范围或页数。" }
+        catch { exportError = HistoryRecordingCopy.exportFailure(error) }
     }
     private static func utcDay(_ date: Date) -> String {
         let formatter = DateFormatter(); formatter.timeZone = TimeZone(secondsFromGMT: 0); formatter.dateFormat = "yyyy-MM-dd"
@@ -276,7 +301,7 @@ struct HistoryCurveReadout: View {
                 directionReadout(point, upload: false)
             }
             if point.totals.quality.contains(.minuteBoundary) {
-                Text("含跨分钟计数：不可拆分的计数归入当前时段；此标记本身不表示丢样，也不证明时段间连续。")
+                Text("部分数据跨越分钟边界，归入同一时段。")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }.padding(10).frame(maxWidth: .infinity, alignment: .leading)
@@ -289,9 +314,9 @@ struct HistoryCurveReadout: View {
         return VStack(alignment: .leading, spacing: 3) {
             Text((upload ? "↑ 上传均速  " : "↓ 下载均速  ") + NetworkPresentation.rate(HistoryCurvePresentation.average(point, upload: upload)))
                 .font(.callout.weight(.medium))
-            Text("已观察字节：" + (bytes.map { "\($0) 字节（\(NetworkPresentation.bytes($0))）" } ?? "未知"))
-            Text("实际观察 \(HistoryCurvePresentation.observedSeconds(point, upload: upload).formatted(.number.precision(.fractionLength(0...3)))) 秒 · \(HistoryCurvePresentation.observation(point, upload: upload))")
-            Text("采样峰值：" + NetworkPresentation.rate(HistoryCurvePresentation.peak(point.totals, upload: upload)))
+            Text("记录流量  " + (bytes.map { "\($0) 字节（\(NetworkPresentation.bytes($0))）" } ?? "未知"))
+            Text("有记录的时长 \(HistoryCurvePresentation.observedSeconds(point, upload: upload).formatted(.number.precision(.fractionLength(0...3)))) 秒 · \(HistoryCurvePresentation.observation(point, upload: upload))")
+            Text("最高采样速率  " + NetworkPresentation.rate(HistoryCurvePresentation.peak(point.totals, upload: upload)))
         }.font(.caption).monospacedDigit().frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -300,13 +325,14 @@ struct HistoryCurveReadout: View {
 struct HistoryCurveView: View {
     let buckets: [HistoryCurveBucket]
     let range: HistoryRange
+    var drawsLine = false
     @State private var interaction = HistoryCurveInteraction()
     @FocusState private var focused: HistoryChartDirection?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("已观察时段的平均速率").font(.subheadline.weight(.semibold))
-            Text(HistoryCurvePresentation.granularity(buckets)).font(.caption).foregroundStyle(.secondary)
+            Text("平均速率").font(.subheadline.weight(.semibold))
+            Text(drawsLine ? HistoryCurvePresentation.granularity(buckets).replacingOccurrences(of: "每柱", with: "每段") : HistoryCurvePresentation.granularity(buckets)).font(.caption).foregroundStyle(.secondary)
             direction(.upload); direction(.download)
             if let inspected = interaction.inspected {
                 if let point = HistoryCurvePresentation.bucket(at: inspected, in: buckets) {
@@ -316,11 +342,11 @@ struct HistoryCurveView: View {
                         .font(.callout).accessibilityIdentifier("network.history.inspection.gap")
                 }
             } else {
-                Text("悬停查看双向读数；点击固定，左右键移动，Escape 释放。").font(.caption).foregroundStyle(.secondary)
+                Text("悬停查看，点击固定；方向键移动，Esc取消固定").font(.caption).foregroundStyle(.secondary)
             }
-            Text("上下行独立缩放，等高不代表等速。彩色基线＝已观察为零；留白＝无可用记录；浅色柱＝部分记录。")
+            Text(drawsLine ? "两张图使用各自的刻度。缺少记录时断开；浅色线表示记录不完整。" : "两张图使用各自的刻度。彩色线表示零流量；留白表示没有记录；浅色柱表示记录不完整。")
                 .font(.caption).foregroundStyle(.secondary)
-            Text("均速＝该时段已观察字节 ÷ 该方向实际观察时长；不代表整段连续采集。采样峰值使用单次读数口径，不是图的纵轴上限。")
+            Text("平均速率按有记录的时长计算；最高采样速率取单次记录的最大值。")
                 .font(.caption).foregroundStyle(.secondary)
         }.padding(12).background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 8))
         .onChange(of: range) { _ in reset() }
@@ -338,16 +364,25 @@ struct HistoryCurveView: View {
             HStack {
                 Text(upload ? "上传均速" : "下载均速").foregroundStyle(color).fontWeight(.medium)
                 Spacer()
-                Text("范围内采样峰值 " + NetworkPresentation.rate(peak)).foregroundStyle(.secondary)
+                Text("范围内最高采样速率 " + NetworkPresentation.rate(peak)).foregroundStyle(.secondary)
             }.font(.callout)
             Chart {
+                if drawsLine {
+                    ForEach(HistoryCurvePresentation.linePoints(buckets, upload: upload)) { point in
+                        LineMark(x: .value("时间", coordinates.x(at: point.date)), y: .value("观察均速", coordinates.y(for: point.rate)),
+                                 series: .value("连续记录", point.series))
+                            .foregroundStyle(color.opacity(point.partial ? 0.45 : 0.85))
+                            .lineStyle(.init(lineWidth: 2))
+                            .interpolationMethod(.linear)
+                    }
+                }
                 ForEach(buckets) { point in
                     if let rate = HistoryCurvePresentation.average(point, upload: upload) {
-                        if rate == 0 {
+                        if rate == 0 && !drawsLine {
                             RuleMark(xStart: .value("开始", coordinates.x(at: point.start)), xEnd: .value("结束", coordinates.x(at: point.end)), y: .value("已观察为零", 0.0))
                                 .foregroundStyle(color.opacity(HistoryCurvePresentation.isPartial(point, upload: upload) ? 0.45 : 0.85)).lineStyle(.init(lineWidth: 2))
                         }
-                        if rate > 0 {
+                        if rate > 0 && !drawsLine {
                             RectangleMark(xStart: .value("开始", coordinates.x(at: point.start)), xEnd: .value("结束", coordinates.x(at: point.end)),
                                           yStart: .value("零基线", 0.0), yEnd: .value("观察均速", coordinates.y(for: rate)))
                                 .foregroundStyle(color.opacity(HistoryCurvePresentation.isPartial(point, upload: upload) ? 0.45 : 0.85))
@@ -430,7 +465,7 @@ private struct HistoryChartAccessibility: AXChartDescriptorRepresentable {
             guard let bytes = HistoryCurvePresentation.observedBytes(point.totals, upload: upload), micros > 0 else { return nil }
             return AXDataPoint(x: point.start.timeIntervalSince1970, y: Double(bytes) / (Double(micros) / 1e6))
         }
-        return AXChartDescriptor(title: upload ? "历史上传已观察均速" : "历史下载已观察均速", summary: "各时段独立，缺口不连接；不是分钟内连续性证据。",
+        return AXChartDescriptor(title: upload ? "历史上传已观察均速" : "历史下载已观察均速", summary: "各时段分别显示，记录缺口留空。",
             xAxis: x, yAxis: y, series: [AXDataSeriesDescriptor(name: "已观察时段", isContinuous: false, dataPoints: points)])
     }
 }

@@ -35,14 +35,14 @@ struct ApplicationNoteEditor: View {
             Text("应用备注").font(.headline)
             VStack(alignment: .leading, spacing: 5) {
                 Text("原名：" + identity.name)
-                Text("标识：" + (identity.bundleID ?? "无 Bundle 标识"))
+                Text("应用标识  " + (identity.bundleID ?? "未记录"))
                 Text("路径：" + (identity.installationPath ?? "未记录"))
                     .fixedSize(horizontal: false, vertical: true)
             }.font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             TextField("备注名（最多 60 个字符）", text: $text)
                 .textFieldStyle(.roundedBorder).focused($editing)
                 .accessibilityIdentifier("network.note.text")
-            Text("仅在本机显示；原始名称、统计、搜索和导出保持不变。留空保存可清除备注。")
+            Text("备注仅保存在本机，搜索仍使用原名。")
                 .font(.caption).foregroundStyle(.secondary)
             if let issue = ApplicationNoteStore.validationMessage(text) {
                 Text(issue).font(.caption).foregroundStyle(.red)

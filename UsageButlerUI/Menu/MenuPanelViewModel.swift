@@ -190,6 +190,8 @@ public struct SafeProviderDiagnosticPresentation: Equatable, Identifiable, Senda
                 "errorClass",
                 "schema"
             ])
+        case .grokBot:
+            return unavailableAdapterKeys.union(["transport"])
         case .ark:
             return unavailableAdapterKeys.union([
                 "adapter",
@@ -770,7 +772,7 @@ public final class MenuPanelViewModel: ObservableObject {
         case .noActiveNetwork:
             return String(localized: "自动 · 系统当前没有活动网络")
         case .systemStateUnreadable:
-            return String(localized: "无法读取系统网络状态 · 不猜测接口")
+            return String(localized: "暂时无法读取当前网络")
         }
     }
 
@@ -806,7 +808,7 @@ public final class MenuPanelViewModel: ObservableObject {
         #if USAGE_BUTLER_FIXTURES
         if isFixtureMode { return "演示数据 · 非本机采集" }
         #endif
-        return "本机运行时 · 只读"
+        return ""
     }
 
     /// The exact points the trend chart will draw for one window. Exposed so

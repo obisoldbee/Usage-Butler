@@ -60,7 +60,7 @@ public enum NetworkStatusRules {
         case .active, .partial: break
         }
         guard !ratesAreStale(snapshot, interface: interface, now: now), let interface,
-              let rate = snapshot.interfaceRates[interface] else { return ("当前接口暂无新鲜速率", false) }
+              let rate = snapshot.interfaceRates[interface] else { return ("当前接口暂无新的速率读数", false) }
         guard rate.uploadBytesPerSecond != nil, rate.downloadBytesPerSecond != nil else { return ("采集中 · 当前方向部分可用", false) }
         return ("采集中", true)
     }
@@ -144,9 +144,9 @@ public enum NetworkStatusRules {
         }
         switch (restarted(total.upload, rate: \.uploadBytesPerSecond),
                 restarted(total.download, rate: \.downloadBytesPerSecond)) {
-        case (true, true): return String(localized: "所选范围内上传、下载统计曾重新起算 · 详见网络设置")
-        case (true, false): return String(localized: "所选范围内上传统计曾重新起算 · 详见网络设置")
-        case (false, true): return String(localized: "所选范围内下载统计曾重新起算 · 详见网络设置")
+        case (true, true): return String(localized: "此范围内上传、下载累计曾重新开始，可在网络设置查看原因")
+        case (true, false): return String(localized: "此范围内上传累计曾重新开始，可在网络设置查看原因")
+        case (false, true): return String(localized: "此范围内下载累计曾重新开始，可在网络设置查看原因")
         case (false, false): return nil
         }
     }

@@ -100,6 +100,8 @@ public enum QuotaExhaustionEvaluator {
     /// recovery. Inspect each node, not aggregate freshness: a partial snapshot
     /// can retain stale siblings alongside current, actionable values.
     public static func statuses(in data: ProviderQuotaData) -> [QuotaMetricStatus] {
+        guard data.providerID != .grokBot || data.grokBotUsage?.meteringSystem == .legacyCursor
+                || (data.source.adapterID == "cursor-grok-shared" && data.grokBotUsage?.shared?.weeklyValueState == .available) else { return [] }
         var statuses: [QuotaMetricStatus] = []
 
         for product in data.products {
@@ -147,6 +149,7 @@ public enum QuotaExhaustionEvaluator {
         }
 
         for balance in data.balances {
+            guard !balance.unlimited, let amount = balance.amount else { continue }
             guard case .fresh = balance.state.freshness else { continue }
             statuses.append(
                 QuotaMetricStatus(
@@ -157,12 +160,12 @@ public enum QuotaExhaustionEvaluator {
                     ),
                     productLabel: "余额",
                     windowLabel: nil,
-                    usageSummary: "余额 \(formatted(balance.amount))\(unitSuffix(balance.unit))",
+                    usageSummary: "余额 \(formatted(amount))\(unitSuffix(balance.unit))",
                     // Balances are not cycle-scoped; recovery above zero
                     // re-arms the marker instead of a reset event.
                     cycleKey: "unknown",
                     resetAt: nil,
-                    isExhausted: balance.amount <= 0
+                    isExhausted: amount <= 0
                 )
             )
         }
@@ -238,7 +241,8 @@ public enum QuotaExhaustionEvaluator {
         for product: QuotaProductData,
         fallback: String?
     ) -> String {
-        nonEmpty(product.sourceProductID) ?? nonEmpty(fallback) ?? "其他额度"
+        if product.id.providerID == .grokBot && product.sourceProductID == "x-shared" { return "Grok / Cursor 共享周额度" }
+        return nonEmpty(product.sourceProductID) ?? nonEmpty(fallback) ?? "其他额度"
     }
 
     private static func windowLabel(for metric: QuotaMetric) -> String? {

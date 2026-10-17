@@ -67,7 +67,9 @@ public enum LiveProviderProjectionMapper {
         let content = projectContent(
             providerID: state.id,
             products: visibleProducts,
-            resetEntitlements: quota?.resetEntitlements ?? []
+            resetEntitlements: quota?.resetEntitlements ?? [],
+            balances: quota?.balances ?? [],
+            quota: quota
         )
 
         return Stage3ProviderProjection(
@@ -91,6 +93,7 @@ public enum LiveProviderProjectionMapper {
             hasOfficialDocumentation: state.capabilities.hasOfficialDocumentation,
             allowsExecutableSelection: state.capabilities.allowsExecutableSelection,
             planLevel: content.providerPlan,
+            sourceNotice: grokBotNotice(state),
             products: content.products,
             capturedAt: quota?.fetchedAt ?? now,
             origin: .runtime
@@ -195,7 +198,9 @@ public enum LiveProviderProjectionMapper {
     private static func projectContent(
         providerID: ProviderID,
         products: [QuotaProductData],
-        resetEntitlements: [ResetEntitlementSummary]
+        resetEntitlements: [ResetEntitlementSummary],
+        balances: [QuotaBalance],
+        quota: ProviderQuotaData?
     ) -> ProjectedContent {
         let orderedProducts = products.sorted(by: productComesBefore)
 
@@ -206,6 +211,11 @@ public enum LiveProviderProjectionMapper {
                     projectOpenAIMetric($0, product: product)
                 }
             } + resetEntitlements.compactMap(projectOpenAIResetEntitlement)
+              + balances.map { balance in
+                  Stage3QuotaMetricProjection(id: "balance." + balance.sourceBalanceID, title: "Credits",
+                      value: .balance(amount: balance.amount, unlimited: balance.unlimited),
+                      dataState: metricDataState(for: balance.state.freshness))
+              }
             let projectedProducts = metrics.isEmpty && orderedProducts.isEmpty
                 ? []
                 : [
@@ -238,12 +248,101 @@ public enum LiveProviderProjectionMapper {
                 products: projectedProducts
             )
 
+        case .grokBot:
+            if quota?.source.adapterID == "cursor-grok-shared", let shared = quota?.grokBotUsage?.shared {
+                return ProjectedContent(providerPlan: nil, products: orderedProducts.map { product in
+                    .init(id: "runtime.grokbot.shared", sourceProductID: product.sourceProductID,
+                        title: String(localized: "Grok / Cursor 共享周额度"), metrics: product.metrics.map { metric in
+                            let number = shared.usagePercent.flatMap(boundedPercent)
+                            return .init(id: stableMetricID(metric.id), title: String(localized: "每周"),
+                                value: shared.weeklyValueState == .available && number != nil ? .percent(value: number!, direction: .used) : .unavailable,
+                                event: shared.availability == .available && shared.weeklyStatus == .metered
+                                    ? shared.resetsAt.map { .init(kind: .reset, occursAt: $0, style: .absoluteDateTime) } : nil,
+                                dataState: metricDataState(for: metric.state.freshness),
+                                displayValueText: sharedValueText(shared), detailText: sharedDetailText(shared))
+                        })
+                })
+            }
+            return ProjectedContent(providerPlan: nil, products: orderedProducts.map { product in
+                Stage3QuotaProductProjection(id: "runtime.grokbot.overview", metrics: product.metrics.map { metric in
+                    let value: Stage3QuotaValue
+                    if case let .percent(percent) = metric.value, let number = boundedPercent(percent.sourceValue) {
+                        value = .percent(value: number, direction: .used)
+                    } else { value = .unavailable }
+                    return Stage3QuotaMetricProjection(id: stableMetricID(metric.id), title: "Sand 来源读数", value: value,
+                        event: metric.window?.timeEvent.map { event in
+                            Stage3TimeEvent(kind: event.kind == .entitlementExpiry ? .entitlementExpiry : .reset,
+                                occursAt: event.occursAt, style: .absoluteDateTime)
+                        }, dataState: metricDataState(for: metric.state.freshness))
+                })
+            })
         case .ark:
             return ProjectedContent(
                 providerPlan: nil,
                 products: orderedProducts.map(projectArkProduct)
             )
         }
+    }
+
+    private static func grokBotNotice(_ state: ProviderState) -> String? {
+        guard state.id == .grokBot else { return nil }
+        guard let observation = state.lastGood?.grokBotUsage else {
+            return "仅支持已授权的 Cursor 登录来源。请在设置中确认授权和来源状态。"
+        }
+        if let shared = observation.shared {
+            switch shared.availability {
+            case .identityUnlinked: return String(localized: "官方尚未提供此账户的共享用量。请在官方页面核对账户关联。")
+            case .missingTeamID: return String(localized: "官方返回了团队作用域错误，请重试并核对账户。")
+            case .unknown: return String(localized: "共享用量状态未提供，请稍后重试。")
+            case .available: return nil
+            }
+        }
+        let meter: String
+        switch observation.meteringSystem {
+        case .unknown: meter = "Sand 来源读数，账户计量体系未确认。"
+        case .xShared: meter = "共享周额度缺少已核实的数据来源。"
+        case .legacyCursor: meter = "Cursor 旧计量体系。"
+        }
+        let entitlement = observation.hasIncludedLimit == true ? "包含额度。" : (observation.trialExpiresAt != nil ? "试用权益，到期时间见额度行。" : "权益状态未确认。")
+        return "Cursor 当前账户已核对。" + meter + entitlement
+    }
+
+    private static func sharedValueText(_ shared: GrokSharedUsageObservation) -> String {
+        switch shared.weeklyValueState {
+        case .available: return String(localized: "已用 \(shared.officialDisplayPercent!)%")
+        case .notReported: return String(localized: "周用量未提供")
+        case .zeroBudget: return String(localized: "周预算为零")
+        case .invalid: return String(localized: "周用量数值无效")
+        case .overBudget: return String(localized: "已超出周额度")
+        case .unavailable:
+            return shared.weeklyStatus == .notApplicable ? String(localized: "共享周额度不适用") : String(localized: "周额度暂不可用")
+        }
+    }
+    private static func sharedDetailText(_ shared: GrokSharedUsageObservation) -> String {
+        func precise(_ value: Decimal?) -> String {
+            guard var value, !value.isNaN else { return String(localized: "未提供") }
+            var rounded = Decimal(); NSDecimalRound(&rounded, &value, 4, .plain)
+            return NSDecimalNumber(decimal: rounded).stringValue + "%"
+        }
+        func money(_ amount: Decimal?) -> String {
+            guard shared.availability == .available, let amount else { return String(localized: "未提供") }
+            guard GrokSharedUsageObservation.nonnegative(amount) else { return String(localized: "来源数值无效") }
+            return "US$" + NSDecimalNumber(decimal: amount / 100).stringValue
+        }
+        let limit: String
+        switch shared.availability == .available ? shared.monthlyLimit : .notReported {
+        case .notReported: limit = String(localized: "未提供")
+        case .unset: limit = String(localized: "未设置")
+        case let .amount(amount): limit = money(amount)
+        }
+        var lines = [String(localized: "周已用 \(precise(shared.usagePercent))"), String(localized: "周剩余 \(precise(shared.remainingPercent))"),
+            String(localized: "本月额外用量 \(money(shared.monthlyUsedCents))"), String(localized: "本月额外用量限额 \(limit)"),
+            String(localized: "本月积分已用 \(money(shared.monthlyCreditsUsedCents))"), String(localized: "额外积分余额未提供")]
+        if shared.availability == .available, let reset = shared.monthlyResetsAt {
+            let time = reset.formatted(.dateTime.locale(Locale(identifier: "zh_CN")).month().day().hour().minute())
+            lines.append(String(localized: "月用量重置 \(time)"))
+        }
+        return lines.joined(separator: "\n")
     }
 
     private static func projectOpenAIMetric(
@@ -413,7 +512,6 @@ public enum LiveProviderProjectionMapper {
             .filter {
                 $0.status.trimmingCharacters(in: .whitespacesAndNewlines)
                     .caseInsensitiveCompare("available") == .orderedSame
-                    && $0.expiresAt != nil
             }
             .sorted(by: resetDetailComesBefore)
 
@@ -433,12 +531,11 @@ public enum LiveProviderProjectionMapper {
             },
             dataState: metricDataState(for: summary.state.freshness),
             resetEntitlements: availableDetails.map {
-                $0.compactMap { detail in
-                    guard let expiresAt = detail.expiresAt else { return nil }
+                $0.map { detail in
                     return Stage3ResetEntitlementItem(
                         id: detail.sourceID,
                         title: detail.title,
-                        expiresAt: expiresAt
+                        expiresAt: detail.expiresAt
                     )
                 }
             }

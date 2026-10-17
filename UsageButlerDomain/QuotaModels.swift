@@ -42,9 +42,17 @@ public struct MetricID: Equatable, Hashable, Identifiable, Sendable {
     public var id: Self { self }
 }
 
+public enum ProviderTransportIdentity: Codable, Equatable, Hashable, Sendable {
+    case cli
+    case https(origin: String, adapterVersion: String, contractEvidence: String)
+}
+
 public struct ProviderSourceIdentity: Equatable, Hashable, Sendable {
     public let providerID: ProviderID
     public let adapterID: String
+    public let transport: ProviderTransportIdentity
+    /// Random process-local account scope; never a subject, email or token hash.
+    public let sessionScope: String?
     public let executableIdentity: String
     public let cliVersion: String
     public let schemaVersion: String
@@ -56,8 +64,12 @@ public struct ProviderSourceIdentity: Equatable, Hashable, Sendable {
         executableIdentity: String,
         cliVersion: String,
         schemaVersion: String,
-        contractVersion: String
+        contractVersion: String,
+        transport: ProviderTransportIdentity = .cli,
+        sessionScope: String? = nil
     ) {
+        self.transport = transport
+        self.sessionScope = sessionScope
         self.providerID = providerID
         self.adapterID = adapterID
         self.executableIdentity = executableIdentity
@@ -430,7 +442,9 @@ public struct QuotaBalanceID: Equatable, Hashable, Identifiable, Sendable {
 
 public struct QuotaBalance: Equatable, Identifiable, Sendable {
     public let sourceBalanceID: String
-    public let amount: Decimal
+    public let amount: Decimal?
+    public let unlimited: Bool
+    public let hasCredits: Bool?
     public let unit: String
     public let provenance: MetricProvenance
     public var state: QuotaNodeState
@@ -444,13 +458,17 @@ public struct QuotaBalance: Equatable, Identifiable, Sendable {
 
     public init(
         sourceBalanceID: String,
-        amount: Decimal,
+        amount: Decimal?,
+        unlimited: Bool = false,
+        hasCredits: Bool? = nil,
         unit: String,
         provenance: MetricProvenance,
         state: QuotaNodeState
     ) {
         self.sourceBalanceID = sourceBalanceID
         self.amount = amount
+        self.unlimited = unlimited
+        self.hasCredits = hasCredits
         self.unit = unit
         self.provenance = provenance
         self.state = state
@@ -464,11 +482,13 @@ public struct ProviderQuotaData: Equatable, Sendable {
     public let products: [QuotaProductData]
     public let balances: [QuotaBalance]
     public let resetEntitlements: [ResetEntitlementSummary]
+    public let grokBotUsage: GrokBotUsageObservation?
 
     public init(
         providerID: ProviderID,
         source: ProviderSourceIdentity,
         fetchedAt: Date,
+        grokBotUsage: GrokBotUsageObservation? = nil,
         products: [QuotaProductData],
         balances: [QuotaBalance],
         resetEntitlements: [ResetEntitlementSummary]
@@ -479,5 +499,6 @@ public struct ProviderQuotaData: Equatable, Sendable {
         self.products = products
         self.balances = balances
         self.resetEntitlements = resetEntitlements
+        self.grokBotUsage = grokBotUsage
     }
 }

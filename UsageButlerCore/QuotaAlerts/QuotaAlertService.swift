@@ -221,7 +221,7 @@ public actor QuotaAlertService {
             }
             return line
         }
-        return QuotaAlertPayload(title: "额度已重置", bodyLines: bodyLines)
+        return QuotaAlertPayload(title: statuses.allSatisfy { $0.windowLabel != nil } ? "额度已重置" : "额度已恢复", bodyLines: bodyLines)
     }
 
     /// Core cannot import the UI layer, so the provider display names are
@@ -231,6 +231,7 @@ public actor QuotaAlertService {
         case .openAI: "OpenAI"
         case .miniMax: "MiniMax"
         case .ark: "火山方舟"
+        case .grokBot: "Grok Bot"
         }
     }
 }

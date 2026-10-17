@@ -19,6 +19,10 @@ final class UsageButlerAppDelegate: NSObject, NSApplicationDelegate {
         }
         #endif
         guard let runtime else { return }
+        #if DEBUG && USAGE_BUTLER_FIXTURES
+        if GrokBotPreviewRecorder.startIfRequested(runtime: runtime) { return }
+        if CopyPreviewRecorder.startIfRequested(runtime: runtime) { return }
+        #endif
         runtime.prepareLegacySettingsOpening()
         let controller = PanelPresentationController(runtime: runtime)
         runtime.panelController = controller

@@ -1,4 +1,5 @@
 public enum ProviderQuotaIdentityError: Error, Equatable, Sendable {
+    case invalidTransport
     case rootProviderMismatch(expected: ProviderID, actual: ProviderID)
     case sourceProviderMismatch(expected: ProviderID, actual: ProviderID)
     case productProviderMismatch(ProductID)
@@ -35,6 +36,14 @@ public enum ProviderQuotaIdentityValidator {
             resetEntitlements: data.resetEntitlements,
             expectedProviderID: expectedProviderID
         )
+        if expectedProviderID == .grokBot {
+            if data.source.adapterID == "cursor-grok-shared" {
+                guard let observation = data.grokBotUsage, observation.meteringSystem == .xShared,
+                      let shared = observation.shared, observation.usagePercent == shared.usagePercent,
+                      observation.currentPeriodStart == shared.periodStart, observation.nextResetAt == shared.resetsAt,
+                      observation.trialExpiresAt == nil else { throw ProviderQuotaIdentityError.invalidTransport }
+            } else if data.grokBotUsage?.shared != nil { throw ProviderQuotaIdentityError.invalidTransport }
+        }
     }
 
     public static func validate(
@@ -58,6 +67,22 @@ public enum ProviderQuotaIdentityValidator {
             )
         }
 
+        try validateTransport(source)
+
+        if expectedProviderID == .grokBot {
+            guard let scope = source.sessionScope, !scope.isEmpty,
+                  products.flatMap(\.metrics).allSatisfy({ $0.provenance.providerSource == source }) else {
+                throw ProviderQuotaIdentityError.invalidTransport
+            }
+            if source.adapterID == "cursor-grok-shared" {
+                guard products.count == 1, products.first?.sourceProductID == "x-shared",
+                      products.first?.metrics.count == 1,
+                      products.first?.metrics.first?.sourceMetricID == "weeklyIncludedUsage",
+                      products.first?.metrics.first?.id.sourceIdentity.sourceBucketID == "weekly",
+                      products.first?.metrics.first?.window?.kind == .weekly,
+                      balances.isEmpty, resetEntitlements.isEmpty else { throw ProviderQuotaIdentityError.invalidTransport }
+            }
+        }
         var productIDs = Set<ProductID>()
         var metricIDs = Set<MetricID>()
         for product in products {
@@ -149,10 +174,31 @@ public enum ProviderQuotaIdentityValidator {
         }
     }
 
+    public static func validateTransport(_ source: ProviderSourceIdentity) throws {
+        switch source.transport {
+        case .cli:
+            guard source.providerID != .grokBot else {
+                throw ProviderQuotaIdentityError.invalidTransport
+            }
+        case let .https(origin, version, evidence):
+            guard source.providerID == .grokBot, origin == "https://cursor.com", !version.isEmpty,
+                  !source.schemaVersion.isEmpty,
+                  !source.contractVersion.isEmpty, source.executableIdentity.isEmpty, source.cliVersion.isEmpty else {
+                throw ProviderQuotaIdentityError.invalidTransport
+            }
+            let legacy = source.adapterID == "cursor-sand" && evidence == "CodexBar-910dc82e78e212f8904f3725a756ad03fa86c551"
+            let shared = source.adapterID == "cursor-grok-shared" && version == "1"
+                && source.schemaVersion == "cursor-shared-usage-status-2" && source.contractVersion == "cursor-shared-weekly-v1"
+                && evidence == "official-cursor-native-usage-status-20261016-v1"
+            guard legacy || shared else { throw ProviderQuotaIdentityError.invalidTransport }
+        }
+    }
+
     private static func validate(
         provenance: MetricProvenance,
         expectedProviderID: ProviderID
     ) throws {
+        try validateTransport(provenance.providerSource)
         guard provenance.sourceIdentity.providerID == expectedProviderID else {
             throw ProviderQuotaIdentityError.provenanceSourceProviderMismatch(
                 provenance.sourceIdentity

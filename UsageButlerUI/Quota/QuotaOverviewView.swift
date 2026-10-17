@@ -4,6 +4,8 @@ import UsageButlerDomain
 
 public struct QuotaOverviewView: View {
     let providers: [Stage3ProviderProjection]
+    @AppStorage(QuotaDisplayMode.preferenceKey)
+    private var storedDisplayMode = QuotaDisplayMode.source.rawValue
     let onLoginProvider: (
         ProviderID,
         ProviderLoginRequest
@@ -37,6 +39,7 @@ public struct QuotaOverviewView: View {
                 ForEach(providers) { provider in
                     ProviderQuotaCard(
                         provider: provider,
+                        displayMode: .validated(storedValue: storedDisplayMode),
                         onLogin: { request in
                             await onLoginProvider(provider.id, request)
                         }
@@ -50,6 +53,7 @@ public struct QuotaOverviewView: View {
 
 private struct ProviderQuotaCard: View {
     let provider: Stage3ProviderProjection
+    let displayMode: QuotaDisplayMode
     let onLogin: (ProviderLoginRequest) async -> ProviderLoginFeedback
 
     @State private var isLoginInFlight = false
@@ -61,9 +65,11 @@ private struct ProviderQuotaCard: View {
 
     init(
         provider: Stage3ProviderProjection,
+        displayMode: QuotaDisplayMode,
         onLogin: @escaping (ProviderLoginRequest) async -> ProviderLoginFeedback
     ) {
         self.provider = provider
+        self.displayMode = displayMode
         self.onLogin = onLogin
         self._refreshOverrideSeconds = AppStorage(
             wrappedValue: -1,
@@ -189,6 +195,11 @@ private struct ProviderQuotaCard: View {
                 .padding(.vertical, 12)
             }
 
+            if let notice = provider.sourceNotice {
+                Text(notice).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14).padding(.bottom, 10)
+            }
             if hasBodyContent {
                 Divider()
                     .padding(.horizontal, 14)
@@ -209,6 +220,7 @@ private struct ProviderQuotaCard: View {
 
                     ProductQuotaSection(
                         product: product,
+                        displayMode: displayMode,
                         accent: accent,
                         refreshIntervalSeconds: effectiveRefreshIntervalSeconds
                     )
@@ -515,7 +527,7 @@ private struct ProviderQuotaStateRow: View {
             if case .stale = provider.dataState {
                 return String(localized: "数据已过期")
             } else {
-                return String(localized: "尚无可展示额度")
+                return String(localized: "还没有读到额度数据")
             }
         case .requiresLogin:
             return String(localized: "需要登录")
@@ -528,11 +540,11 @@ private struct ProviderQuotaStateRow: View {
 
     private func retryText(now: Date) -> String {
         if provider.activity.isInFlight { return String(localized: "正在重试…") }
-        if provider.automaticRetry == false { return String(localized: "仅手动刷新 · 详情见设置中的脱敏诊断") }
+        if provider.automaticRetry == false { return String(localized: "已设为手动刷新，请点击刷新重试") }
         if let retryAt = provider.retryAt, retryAt > now {
             return String(localized: "将于 \(retryAt.formatted(date: .omitted, time: .standard)) 自动重试")
         }
-        return String(localized: "等待重新检测 · 详情见设置中的脱敏诊断")
+        return String(localized: "等待重新检测，可点击刷新重试")
     }
 
     private var detail: String? {
@@ -571,6 +583,7 @@ private struct ProviderQuotaStateRow: View {
 
 private struct ProductQuotaSection: View {
     let product: Stage3QuotaProductProjection
+    let displayMode: QuotaDisplayMode
     let accent: Color
     let refreshIntervalSeconds: Int
 
@@ -582,14 +595,6 @@ private struct ProductQuotaSection: View {
                         .font(.subheadline.weight(.semibold))
                     if let planLevel = product.planLevel {
                         PlanBadge(badge: planLevel)
-                    } else if product.metrics.isEmpty {
-                        Text("已到期")
-                            .font(.caption2.weight(.medium))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.secondary.opacity(0.15))
-                            .foregroundStyle(.secondary)
-                            .clipShape(Capsule())
                     }
                     Spacer()
                 }
@@ -600,7 +605,7 @@ private struct ProductQuotaSection: View {
 
             if product.metrics.isEmpty {
                 HStack {
-                    Text("暂无可用额度（已到期或未订购）")
+                    Text("暂无额度数据")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -615,6 +620,7 @@ private struct ProductQuotaSection: View {
                     }
                     QuotaMetricRow(
                         metric: metric,
+                        displayMode: displayMode,
                         accent: accent,
                         refreshIntervalSeconds: refreshIntervalSeconds
                     )
@@ -627,6 +633,7 @@ private struct ProductQuotaSection: View {
 
 private struct QuotaMetricRow: View {
     let metric: Stage3QuotaMetricProjection
+    let displayMode: QuotaDisplayMode
     let accent: Color
     let refreshIntervalSeconds: Int
 
@@ -642,8 +649,12 @@ private struct QuotaMetricRow: View {
         metric.resetEntitlements ?? []
     }
 
+    private var presentation: QuotaMetricPresentation {
+        QuotaMetricPresentation(metric: metric, mode: displayMode)
+    }
+
     var body: some View {
-        if expandableItems.count < 2 {
+        if !isEntitlement && presentation.detailText == nil {
             rowContent(showChevron: false)
         } else {
             Button {
@@ -661,10 +672,11 @@ private struct QuotaMetricRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("quota.\(isEntitlement ? "entitlement" : "details").\(metric.id)")
             .accessibilityHint(
                 isExpanded
-                    ? String(localized: "收起重置卡明细")
-                    : String(localized: "展开重置卡明细")
+                    ? (isEntitlement ? String(localized: "收起重置卡明细") : String(localized: "收起用量详情"))
+                    : (isEntitlement ? String(localized: "展开重置卡明细") : String(localized: "展开用量详情"))
             )
         }
     }
@@ -675,7 +687,7 @@ private struct QuotaMetricRow: View {
                 Text(metric.title)
                     .font(.subheadline.weight(.medium))
                     .lineLimit(1)
-                if let badge = metric.windowBadge {
+                if let badge = metric.windowBadge, badge != metric.title {
                     Text(badge)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -700,10 +712,9 @@ private struct QuotaMetricRow: View {
                     }
                 }
 
-                if let progress = metric.value.progressFraction {
+                if let progress = presentation.progressFraction {
                     ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                        .tint(barTint)
+                        .progressViewStyle(QuotaProgressStyle(color: barTint))
                         .frame(maxWidth: .infinity)
                         .accessibilityValue(valueText)
                 }
@@ -729,12 +740,27 @@ private struct QuotaMetricRow: View {
     }
 
     private var expandedDetails: some View {
+        Group {
+        if let detail = presentation.detailText {
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+                .padding(.horizontal, 14)
+                .padding(.bottom, 8)
+        } else {
         VStack(alignment: .leading, spacing: 8) {
-            Text("重置卡到期时间")
+            Text("重置次数与到期时间")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             VStack(spacing: 0) {
+                if expandableItems.isEmpty {
+                    Text("服务只返回了可用次数，未提供每次的到期时间。")
+                        .font(.caption).foregroundStyle(.secondary).padding(12)
+                }
                 ForEach(Array(expandableItems.enumerated()), id: \.element.id) { index, item in
                     if index > 0 {
                         Divider()
@@ -748,7 +774,7 @@ private struct QuotaMetricRow: View {
                             .font(.caption)
                             .lineLimit(1)
                         Spacer(minLength: 0)
-                        Text(String(localized: "将于 \(absoluteDateTimeText(item.expiresAt)) 到期"))
+                        Text(item.expiresAt.map { "\(absoluteDateTimeText($0)) 到期" } ?? "到期时间未提供")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -766,6 +792,8 @@ private struct QuotaMetricRow: View {
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
         .padding(.horizontal, 14)
         .padding(.bottom, 4)
+        }
+        }
     }
 
     private func detailTitle(_ item: Stage3ResetEntitlementItem) -> String {
@@ -776,21 +804,7 @@ private struct QuotaMetricRow: View {
         return String(localized: "重置权益")
     }
 
-    private var valueText: String {
-        switch metric.value {
-        case let .percent(value, direction):
-            let prefix = direction == .remaining
-                ? String(localized: "剩余")
-                : String(localized: "已用")
-            return "\(prefix) \(formatPercent(value))%"
-        case .unlimited:
-            return String(localized: "∞ 无限制")
-        case let .usedCount(used, total, unit):
-            return String(localized: "已用 \(used) / \(total) \(unit)")
-        case let .entitlement(availableCount):
-            return String(localized: "可用 \(availableCount) 次")
-        }
-    }
+    private var valueText: String { presentation.valueText }
 
     private var valueColor: Color {
         if case .unlimited = metric.value { return .blue }
@@ -818,7 +832,7 @@ private struct QuotaMetricRow: View {
     }
 
     private var eventText: String {
-        guard let event = metric.event else { return "—" }
+        guard let event = metric.event else { return isEntitlement ? "到期未提供" : "—" }
         let suffix: String
         switch event.kind {
         case .reset: suffix = String(localized: "重置")
@@ -844,6 +858,11 @@ private struct QuotaMetricRow: View {
         }
     }
 
+    private var isEntitlement: Bool {
+        if case .entitlement = metric.value { return true }
+        return false
+    }
+
     private func absoluteDateTimeText(_ date: Date) -> String {
         date.formatted(
             .dateTime
@@ -854,13 +873,6 @@ private struct QuotaMetricRow: View {
                 .minute(.twoDigits)
         )
     }
-
-    private func formatPercent(_ value: Double) -> String {
-        if value.rounded() == value {
-            return String(Int(value))
-        }
-        return String(format: "%.2f", value)
-    }
 }
 
 enum PlanBadgePresentation {
@@ -869,7 +881,7 @@ enum PlanBadgePresentation {
         case .reported:
             return String(localized: "\(badge.value) 套餐")
         case .inferred:
-            return String(localized: "\(badge.value)，根据视频权益推断")
+            return String(localized: "\(badge.value)，根据视频额度推测")
         }
     }
 }

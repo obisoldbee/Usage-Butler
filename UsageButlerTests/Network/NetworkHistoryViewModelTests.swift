@@ -44,9 +44,9 @@ func historyTestContract(_ request: HistoryQueryRequest, totalEvents: Int = 0) -
     }
     func testFailureIsVisibleWhenUnregisteredAndApprovalIsPreserved() {
         let model = BackgroundNetworkViewModel(); model.serviceIssue = "history.signature-error"
-        XCTAssertTrue(model.serviceTitle.contains("history.signature-error"))
+        XCTAssertFalse(model.serviceTitle.contains("history.signature-error")); XCTAssertEqual(model.serviceIssue, "history.signature-error")
         model.registration = "requiresApproval"; XCTAssertTrue(model.serviceTitle.contains("等待系统"))
-        model.serviceIssue = nil; model.registration = "notRegistered"; XCTAssertTrue(model.serviceTitle.contains("保留"))
+        model.serviceIssue = nil; model.registration = "notRegistered"; XCTAssertTrue(model.serviceTitle.contains("已停止"))
     }
     func testWireMeasuresActualBytesAndRejectsArbitraryPathShape() throws {
         XCTAssertThrowsError(try BackgroundNetworkWire.encode(.init(error: String(repeating: "界", count: 2_000_000))))
@@ -473,5 +473,26 @@ extension NetworkHistoryViewModelTests {
         model.onQuery = { request in self.result(request) }
         model.reload(); await model.currentQueryTask?.value
         XCTAssertEqual(model.result?.contract?.scope.search, "needle"); XCTAssertNil(model.queryIssue)
+    }
+}
+
+
+extension NetworkHistoryViewModelTests {
+    func testHistoricEndDateQueriesOlderWindowAndNowRestoresLiveRange() async {
+        let now = Date(timeIntervalSince1970: 1_786_400_040)
+        let model = BackgroundNetworkViewModel(now: { now })
+        var ends: [Date] = []
+        model.onQuery = { request in ends.append(request.scope.range.end); return self.result(request) }
+        let past = now.addingTimeInterval(-90 * 86_400)
+        model.historyEnd = past
+        await model.currentQueryTask?.value
+        XCTAssertEqual(ends.last, past)
+        model.range = .day
+        await model.currentQueryTask?.value
+        XCTAssertEqual(ends.last, past)
+        XCTAssertEqual(model.result?.range.start, past.addingTimeInterval(-86_400))
+        model.historyEnd = nil
+        await model.currentQueryTask?.value
+        XCTAssertEqual(ends.last, now)
     }
 }

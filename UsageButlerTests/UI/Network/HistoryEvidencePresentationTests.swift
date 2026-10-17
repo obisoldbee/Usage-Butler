@@ -44,7 +44,7 @@ final class HistoryEvidencePresentationTests: XCTestCase {
                                             file: StaticString = #filePath, line: UInt = #line) throws {
         let notice = try XCTUnwrap(HistoryCurvePresentation.historyNotice(coverage: result.coverage, range: result.range),
                                   file: file, line: line)
-        XCTAssertTrue(notice.contains("首次开始记录时的系统时间"), notice, file: file, line: line)
+        XCTAssertTrue(notice.contains("首次记录时的系统时间"), notice, file: file, line: line)
         XCTAssertFalse(notice.contains("尚未记录"), notice, file: file, line: line)
         XCTAssertFalse(notice.contains("采集历史始于"), notice, file: file, line: line)
         XCTAssertFalse(notice.contains("回拨"), "A minute bucket alone does not prove clock rollback", file: file, line: line)
@@ -87,7 +87,7 @@ final class HistoryEvidencePresentationTests: XCTestCase {
         XCTAssertEqual(valid.totals.downloadObservedMicroseconds, 60_000_000)
         XCTAssertFalse(valid.totals.quality.contains(.clockChanged))
         XCTAssertEqual(HistoryCurvePresentation.average(valid, upload: true), 100)
-        XCTAssertEqual(HistoryCurvePresentation.observation(valid, upload: false), "已观察为零 · 已记录")
+        XCTAssertEqual(HistoryCurvePresentation.observation(valid, upload: false), "零流量 · 已记录")
         XCTAssertNil(HistoryCurvePresentation.average(asymmetric, upload: true))
         XCTAssertEqual(HistoryCurvePresentation.observation(asymmetric, upload: true), "无可用记录")
         XCTAssertEqual(asymmetric.totals.download, 12_000)
@@ -137,7 +137,7 @@ final class HistoryEvidencePresentationTests: XCTestCase {
 
     func testRetentionEvidenceStillExplainsEmptyRangeBeforeFirstWallTime() async throws {
         let age = HistoryPresentationAge()
-        let store = try NetworkHistoryStore(directory: directory(), clock: age.read)
+        let store = try NetworkHistoryStore(directory: directory(), configuration: .init(retentionDays: 14), clock: age.read)
         let firstWall = day + 8 * 3_600 + 17
         try await store.accept(frame(1, at: firstWall, upload: 100, download: 0))
         try await store.flush()

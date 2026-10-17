@@ -22,6 +22,8 @@ public final class BackgroundNetworkViewModel: ObservableObject {
     @Published public var serviceIssue: String?
     @Published public var configuredRule = HistoryUploadRule()
     @Published public var range: Range = .week { didSet { if range != oldValue { reload() } } }
+    @Published public var historyEnd: Date? { didSet { if historyEnd != oldValue { reload() } } }
+    public var currentHistoryEnd: Date { historyEnd ?? now() }
     @Published public var selectedApplication: String? { didSet { selectionChanged(from: oldValue) } }
     @Published public var eventKind: String? {
         didSet {
@@ -38,6 +40,7 @@ public final class BackgroundNetworkViewModel: ObservableObject {
     @Published public private(set) var result: HistoryQueryResult?
     @Published public private(set) var loading = false
     @Published public private(set) var queryIssue: String?
+    @Published public private(set) var queryDiagnosticCode: String?
     public var onEnabled: ((Bool) async -> Void)?
     public var onOpenApproval: (() -> Void)?
     public var onOpenHistory: (() -> Void)?
@@ -76,17 +79,17 @@ public final class BackgroundNetworkViewModel: ObservableObject {
     public var serviceTitle: String {
         if changing { return "正在更新后台状态…" }
         if registration == "requiresApproval" { return "等待系统允许后台运行" }
-        if let issue = serviceIssue ?? status?.coverage.issue { return "后台暂不可用 · \(issue)" }
+        if serviceIssue != nil || status?.coverage.issue != nil { return "后台暂不可用，请刷新状态重试" }
         if registration == "notFound" { return "后台组件不可用" }
-        if registration == "notRegistered" { return "后台已停止 · 保留已提交历史" }
-        guard let status else { return "正在连接后台采集服务…" }
-        if let seconds = status.recoverySeconds { return "来源暂时中断 · 约\((seconds + 59) / 60)分钟后重试" }
+        if registration == "notRegistered" { return "后台记录已停止" }
+        guard let status else { return "正在连接后台…" }
+        if let seconds = status.recoverySeconds { return "后台暂时中断，约\((seconds + 59) / 60)分钟后重试" }
         switch status.sourceState {
-        case .active: return "后台正在采集 · 退出主程序后继续"
-        case .partial: return "后台部分采样不可用"
-        case .starting: return "后台正在建立基线"
-        case .stopped: return "后台采集已停止"
-        case .unavailable: return "后台来源暂不可用"
+        case .active: return "后台记录中"
+        case .partial: return "部分采样未完整读取"
+        case .starting: return "正在读取应用流量…"
+        case .stopped: return "后台记录已停止"
+        case .unavailable: return "后台暂不可用"
         }
     }
     public func setEnabled(_ value: Bool) { Task { await onEnabled?(value) } }
@@ -105,13 +108,13 @@ public final class BackgroundNetworkViewModel: ObservableObject {
         revision &+= 1; let token = revision; task?.cancel()
         returnFocus = nil; navigationNotice = nil
         if freezeNewRange || frozenRange == nil {
-            frozenRange = .recent(days: range.days, now: now())
+            frozenRange = .recent(days: range.days, now: currentHistoryEnd)
             page = 0; summaryContext = nil; pendingReturn = nil; queryContext = nil
         }
         guard let onQuery, let requested = frozenRange else { return }
         let request = HistoryQueryRequest(range: requested, applicationKey: selectedApplication, page: page,
             eventKind: eventKind, search: search, context: queryContext)
-        loading = false; queryIssue = nil; result = nil
+        loading = false; queryIssue = nil; queryDiagnosticCode = nil; result = nil
         guard request.isValid else { queryIssue = "搜索文字过长，请缩短后重试。"; return }
         loading = true
         let pause = pause
@@ -145,12 +148,13 @@ public final class BackgroundNetworkViewModel: ObservableObject {
                 }
             } catch {
                 guard let self, token == revision, !Task.isCancelled else { return }
+                queryDiagnosticCode = Self.code(error)
                 switch Self.code(error) {
-                case HistoryQueryFailure.changed.code: queryIssue = "查询中的条目或顺序已变化，请刷新后重新浏览。"
-                case HistoryQueryFailure.expired.code: queryIssue = "本次查询已过期或后台已重启，请刷新后重新浏览。"
+                case HistoryQueryFailure.changed.code: queryIssue = "历史列表已更新，请刷新后继续浏览。"
+                case HistoryQueryFailure.expired.code: queryIssue = "这次浏览已失效，请刷新历史。"
                 case HistoryQueryFailure.incompatible.code: queryIssue = "后台不支持当前历史查询，请更新后台组件或重新连接。"
                 case "history.query-busy", "history.request-busy": queryIssue = "历史查询暂时繁忙，请点击刷新重试。"
-                default: queryIssue = "历史暂不可读。记录可能尚未创建，或数据库正在使用、版本不兼容。\(Self.code(error))"
+                default: queryIssue = "暂时无法读取历史，请刷新重试。"
                 }
                 loading = false
                 if pendingReturn != nil { returnFocus = .summary; pendingReturn = nil }
@@ -175,7 +179,7 @@ public final class BackgroundNetworkViewModel: ObservableObject {
     public func nextPage() { page = min(1023, page + 1); pendingReturn = nil; reload(freezeNewRange: false) }
     public func previousPage() { page = max(0, page - 1); pendingReturn = nil; reload(freezeNewRange: false) }
     public func closeHistory() {
-        revision &+= 1; task?.cancel(); task = nil; result = nil; loading = false; queryIssue = nil
+        revision &+= 1; task?.cancel(); task = nil; result = nil; loading = false; queryIssue = nil; queryDiagnosticCode = nil
         summaryContext = nil; pendingReturn = nil; queryContext = nil; frozenRange = nil; returnFocus = nil; navigationNotice = nil
     }
     public static func code(_ error: Error) -> String {

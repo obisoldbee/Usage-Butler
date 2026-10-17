@@ -26,8 +26,8 @@ final class ProviderBootstrapTests: XCTestCase {
             now: fixedNow
         )
 
-        XCTAssertEqual(ProviderDefaults.initiallyEnabled, Set(ProviderID.allCases))
-        XCTAssertEqual(states.map(\.id), [.openAI, .miniMax, .ark])
+        XCTAssertEqual(ProviderDefaults.initiallyEnabled, [.openAI, .miniMax, .ark])
+        XCTAssertEqual(states.map(\.id), [.openAI, .miniMax, .ark, .grokBot])
 
         for state in states {
             XCTAssertEqual(state.connection, .detecting(startedAt: fixedNow))
