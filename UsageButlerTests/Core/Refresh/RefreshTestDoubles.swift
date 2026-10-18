@@ -141,6 +141,7 @@ actor TestCallRecorder {
 actor FakeProviderAdapter: ProviderAdapter {
     nonisolated let id: ProviderID
     nonisolated let capabilities: ProviderCapabilities
+    nonisolated let retainsDataWhenDisabled: Bool
 
     private let recorder: TestCallRecorder?
     private var discoveryResults: [DiscoveryResult]
@@ -169,6 +170,7 @@ actor FakeProviderAdapter: ProviderAdapter {
     init(
         id: ProviderID,
         capabilities: ProviderCapabilities,
+        retainsDataWhenDisabled: Bool = true,
         recorder: TestCallRecorder? = nil,
         discoveryResults: [DiscoveryResult] = [],
         readResults: [ProviderReadResult] = [],
@@ -176,6 +178,7 @@ actor FakeProviderAdapter: ProviderAdapter {
     ) {
         self.id = id
         self.capabilities = capabilities
+        self.retainsDataWhenDisabled = retainsDataWhenDisabled
         self.recorder = recorder
         self.discoveryResults = discoveryResults
         self.readResults = readResults

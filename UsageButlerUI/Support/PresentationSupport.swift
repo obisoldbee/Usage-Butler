@@ -8,7 +8,7 @@ public enum ProviderPresentation {
         case .openAI: "OpenAI"
         case .miniMax: "MiniMax"
         case .ark: String(localized: "火山方舟")
-        case .grokBot: "Grok Bot"
+        case .grokBot: "Grok"
         }
     }
 
@@ -36,7 +36,7 @@ public enum ProviderPresentation {
         case .openAI: "ProviderOpenAILogo"
         case .miniMax: "ProviderMiniMaxLogo"
         case .ark: "ProviderArkLogo"
-        case .grokBot: nil
+        case .grokBot: "ProviderGrokLogo"
         }
     }
 
@@ -196,7 +196,7 @@ public enum QuotaAvailabilityBand: Equatable, Sendable {
         now: Date,
         refreshIntervalSeconds: Int
     ) -> QuotaAvailabilityBand? {
-        guard case let .percent(raw, direction) = value, raw.isFinite,
+        guard case let .percent(raw, direction) = value, !raw.isNaN,
               (0...100).contains(raw) else {
             return nil
         }
@@ -206,8 +206,7 @@ public enum QuotaAvailabilityBand: Equatable, Sendable {
                 return .lost
             }
         }
-        // Classify in percent space: `100 - raw` keeps integer reports exact,
-        // whereas scaling to 0...1 first makes 1 - 0.7 land above 0.3.
+        // Compare the exact available percentage before geometric conversion.
         let available = direction == .remaining ? raw : 100 - raw
         if available <= 30 { return .low }
         if available <= 60 { return .medium }

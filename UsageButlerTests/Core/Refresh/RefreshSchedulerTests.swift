@@ -59,6 +59,10 @@ final class RefreshSchedulerTests: XCTestCase {
         let second = try XCTUnwrap(secondScheduled)
 
         XCTAssertGreaterThan(second.generation, first.generation)
+        // A controller may finish cancelling a captured token after replacement.
+        await scheduler.cancel(token: first)
+        let pending = await scheduler.scheduledToken(for: key)
+        XCTAssertEqual(pending, second)
         await clock.waitUntilSleepIsRegistered(until: second.deadline)
         await clock.advance(to: 20)
         await recorder.waitUntilRecorded(second)

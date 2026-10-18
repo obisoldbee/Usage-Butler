@@ -252,7 +252,7 @@ public enum LiveProviderProjectionMapper {
             if quota?.source.adapterID == "cursor-grok-shared", let shared = quota?.grokBotUsage?.shared {
                 return ProjectedContent(providerPlan: nil, products: orderedProducts.map { product in
                     .init(id: "runtime.grokbot.shared", sourceProductID: product.sourceProductID,
-                        title: String(localized: "Grok / Cursor 共享周额度"), metrics: product.metrics.map { metric in
+                        metrics: product.metrics.map { metric in
                             let number = shared.usagePercent.flatMap(boundedPercent)
                             return .init(id: stableMetricID(metric.id), title: String(localized: "每周"),
                                 value: shared.weeklyValueState == .available && number != nil ? .percent(value: number!, direction: .used) : .unavailable,
@@ -320,9 +320,8 @@ public enum LiveProviderProjectionMapper {
     }
     private static func sharedDetailText(_ shared: GrokSharedUsageObservation) -> String {
         func precise(_ value: Decimal?) -> String {
-            guard var value, !value.isNaN else { return String(localized: "未提供") }
-            var rounded = Decimal(); NSDecimalRound(&rounded, &value, 4, .plain)
-            return NSDecimalNumber(decimal: rounded).stringValue + "%"
+            guard let value, !value.isNaN else { return String(localized: "未提供") }
+            return NSDecimalNumber(decimal: value).stringValue + "%"
         }
         func money(_ amount: Decimal?) -> String {
             guard shared.availability == .available, let amount else { return String(localized: "未提供") }
@@ -473,7 +472,7 @@ public enum LiveProviderProjectionMapper {
         )
     }
 
-    private static func arkUsedPercent(_ value: QuotaMetricValue) -> Double? {
+    private static func arkUsedPercent(_ value: QuotaMetricValue) -> Decimal? {
         switch value {
         case let .percent(percent):
             guard percent.sourceDirection == .used else { return nil }
@@ -485,14 +484,14 @@ public enum LiveProviderProjectionMapper {
                 return boundedPercent(sourcePercent.sourceValue)
             }
 
-            guard let used = finiteDouble(amount.used),
-                  let total = finiteDouble(amount.total),
+            let used = amount.used, total = amount.total
+            guard !used.isNaN, !total.isNaN,
                   used >= 0,
                   total > 0,
                   used <= total else {
                 return nil
             }
-            return (used / total) * 100
+            return boundedPercent((used / total) * 100)
 
         case .count, .unlimited, .absolute, .unavailable:
             return nil
@@ -766,8 +765,8 @@ public enum LiveProviderProjectionMapper {
         return lhs.sourceID < rhs.sourceID
     }
 
-    private static func boundedPercent(_ value: Decimal) -> Double? {
-        guard let value = finiteDouble(value), value >= 0, value <= 100 else {
+    private static func boundedPercent(_ value: Decimal) -> Decimal? {
+        guard !value.isNaN, value >= 0, value <= 100 else {
             return nil
         }
         return value

@@ -38,7 +38,7 @@ struct QuotaMetricPresentation {
             detailText = metric.detailText
             return
         }
-        guard raw.isFinite, (0...100).contains(raw) else {
+        guard !raw.isNaN, (0...100).contains(raw) else {
             valueText = String(localized: "额度数值无效")
             progressFraction = nil
             detailText = metric.detailText
@@ -52,32 +52,36 @@ struct QuotaMetricPresentation {
         case .remaining: direction = .remaining
         }
         let value = direction == sourceDirection ? raw : 100 - raw
-        progressFraction = value / 100
+        progressFraction = NSDecimalNumber(decimal: value / 100).doubleValue
         if mode == .source {
             valueText = metric.displayValueText ?? Self.percentText(raw, direction: direction)
         } else {
             // Convert the unrounded source first, then floor in either direction.
             // Positive values below one percent remain visible as 1%.
-            let displayed = value > 0 && value < 1 ? 1 : value.rounded(.down)
+            var unrounded = value
+            var displayed = Decimal()
+            NSDecimalRound(&displayed, &unrounded, 0, .down)
+            if value > 0 && value < 1 { displayed = 1 }
             valueText = Self.percentText(displayed, direction: direction)
         }
-        let source = String(localized: "来源读数") + " "
-            + Self.directionText(sourceDirection) + " " + Self.preciseText(raw) + "%"
-        detailText = ([source] + [metric.detailText].compactMap { $0 }).joined(separator: "\n")
+        detailText = metric.detailText
     }
 
     private static func directionText(_ direction: Stage3QuotaDirection) -> String {
         direction == .remaining ? String(localized: "剩余") : String(localized: "已用")
     }
 
-    private static func percentText(_ value: Double, direction: Stage3QuotaDirection) -> String {
-        let number = value.rounded() == value
-            ? String(Int(value)) : String(format: "%.2f", value)
+    private static func percentText(_ value: Decimal, direction: Stage3QuotaDirection) -> String {
+        var unrounded = value, integer = Decimal(), rounded = Decimal()
+        NSDecimalRound(&integer, &unrounded, 0, .down)
+        NSDecimalRound(&rounded, &unrounded, 2, .plain)
+        var number = NSDecimalNumber(decimal: rounded).stringValue
+        if value != integer {
+            let fractionDigits = number.split(separator: ".").dropFirst().first?.count ?? 0
+            if fractionDigits == 0 { number += "." }
+            number += String(repeating: "0", count: max(0, 2 - fractionDigits))
+        }
         return directionText(direction) + " " + number + "%"
-    }
-
-    private static func preciseText(_ value: Double) -> String {
-        value.rounded() == value ? String(Int(value)) : String(value)
     }
 
     private static func nonPercentText(_ value: Stage3QuotaValue) -> String {

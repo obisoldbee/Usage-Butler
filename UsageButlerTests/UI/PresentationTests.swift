@@ -18,7 +18,7 @@ final class PresentationTests: XCTestCase {
     func testProviderNamesMatchProductCopy() {
         XCTAssertEqual(
             ProviderID.allCases.map(ProviderPresentation.displayName),
-            ["OpenAI", "MiniMax", "火山方舟", "Grok Bot"]
+            ["OpenAI", "MiniMax", "火山方舟", "Grok"]
         )
     }
 
@@ -57,14 +57,14 @@ final class PresentationTests: XCTestCase {
     }
 
     func testImageAssetNamesAreUniqueAndOriginalLogosRemainPackaged() {
-        XCTAssertNil(ProviderPresentation.imageAssetName(for: .grokBot))
+        XCTAssertEqual(ProviderPresentation.imageAssetName(for: .grokBot), "ProviderGrokLogo")
         let assetNames = ProviderID.allCases.compactMap(
             ProviderPresentation.imageAssetName(for:)
         )
         XCTAssertEqual(
             assetNames.count,
-            3,
-            "The original CLI providers retain their packaged logos; Grok Bot uses a neutral symbol"
+            4,
+            "Every provider uses its packaged logo"
         )
         XCTAssertEqual(Set(assetNames).count, assetNames.count,
                        "Provider asset names must be unique")

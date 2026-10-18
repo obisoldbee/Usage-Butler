@@ -251,8 +251,14 @@ public actor ProviderController {
                     apply(.persistenceChanged(.degraded(failure)), now: clearedAt.wallTime)
                 }
             }
-            await scheduler.cancel(providerID: state.id)
+            let schedules = await scheduler.scheduledTokens(providerID: state.id)
+            guard isCurrentOperation(generation), !isEnabled else { return .cancelled }
             retryAttempts.removeAll()
+            // A new on intent can run during cache I/O or scheduler awaits.
+            // Cancel only this disabled generation's captured schedules.
+            for token in schedules {
+                await scheduler.cancel(token: token)
+            }
             let reading = await clock.reading()
             guard isCurrentOperation(generation), !isEnabled else {
                 return .cancelled

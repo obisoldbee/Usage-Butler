@@ -337,7 +337,7 @@ public struct SettingsRootView: View {
             }
 
             Divider()
-            Text("关闭后从额度面板隐藏。Grok Bot 同时撤销会话授权、取消请求并清除本次读数。")
+            Text("关闭后从额度面板隐藏。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
@@ -606,7 +606,7 @@ private struct ProviderSettingsRow: View {
                 }
 
                 if provider.id == .grokBot {
-                    Text("允许后，只读 Cursor 的 User/globalStorage/state.vscdb 中指定登录键，用于向 cursor.com 核对账户与查询 Grok / Cursor 共享周额度。会话仅在内存使用。关闭开关即撤销、取消请求并清除本次额度。无此来源时请先在 Cursor 登录。共享周用量和月额外用量分别显示。")
+                    Text("允许后，只读 Cursor 的 User/globalStorage/state.vscdb 指定登录键，向 cursor.com 核对账户并查询 Grok / Cursor 共享周用量和月额外用量。会话仅在内存使用。关闭即撤销授权、取消请求并清除本次读数。请先在 Cursor 登录。")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if isEnabled && provider.id == .ark {

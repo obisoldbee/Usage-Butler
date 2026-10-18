@@ -191,7 +191,7 @@ public enum Stage3FixtureCatalog {
         id: String,
         title: String,
         badge: String? = nil,
-        value: Double,
+        value: Decimal,
         seconds: TimeInterval?,
         now: Date,
         kind: Stage3TimeEventKind

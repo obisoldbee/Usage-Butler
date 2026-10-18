@@ -1,0 +1,27 @@
+{
+  "images": [
+    {
+      "filename": "ProviderGrokLogo.png",
+      "idiom": "mac",
+      "scale": "1x"
+    },
+    {
+      "filename": "ProviderGrokLogo@2x.png",
+      "idiom": "mac",
+      "scale": "2x"
+    },
+    {
+      "filename": "ProviderGrokLogo@3x.png",
+      "idiom": "mac",
+      "scale": "3x"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  },
+  "properties": {
+    "preserves-vector-representation": false,
+    "template-rendering-intent": "original"
+  }
+}

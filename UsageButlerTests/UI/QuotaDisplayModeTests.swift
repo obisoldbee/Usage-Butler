@@ -8,7 +8,7 @@ import UsageButlerProviders
 final class QuotaDisplayModeTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_792_022_400)
 
-    private func metric(_ raw: Double, _ direction: Stage3QuotaDirection,
+    private func metric(_ raw: Decimal, _ direction: Stage3QuotaDirection,
                         text: String? = nil, detail: String? = nil,
                         state: Stage3QuotaMetricDataState? = nil,
                         id: String = "sample", window: String? = nil) -> Stage3QuotaMetricProjection {
@@ -81,7 +81,7 @@ final class QuotaDisplayModeTests: XCTestCase {
         try check(source, mode: .used, text: "已用 67%", fraction: 0.6789, band: .medium)
         try check(source, mode: .remaining, text: "剩余 32%", fraction: 0.3211, band: .medium)
         let transformed = QuotaMetricPresentation(metric: source, mode: .remaining)
-        XCTAssertEqual(transformed.detailText, "来源读数 已用 67.89%\n本月额外用量 US$12.34")
+        XCTAssertEqual(transformed.detailText, "本月额外用量 US$12.34")
         XCTAssertEqual(source.displayValueText, "已用 67%")
         XCTAssertEqual(source.value, .percent(value: 67.89, direction: .used))
     }
@@ -107,7 +107,7 @@ final class QuotaDisplayModeTests: XCTestCase {
             for direction: Stage3QuotaDirection in [.used, .remaining] {
                 let mode: QuotaDisplayMode = direction == .used ? .used : .remaining
                 let prefix = direction == .used ? "已用" : "剩余"
-                XCTAssertEqual(QuotaMetricPresentation(metric: metric(raw, direction), mode: mode).valueText, "\(prefix) \(expected)%")
+                XCTAssertEqual(QuotaMetricPresentation(metric: metric(Decimal(raw), direction), mode: mode).valueText, "\(prefix) \(expected)%")
             }
         }
         try check(metric(99.999, .used), mode: .remaining, text: "剩余 1%", fraction: 0.00001, band: .low)
@@ -119,14 +119,14 @@ final class QuotaDisplayModeTests: XCTestCase {
         XCTAssertEqual(QuotaMetricPresentation(metric: metric(0.1, .used, text: "已用 1%"), mode: .source).valueText, "已用 1%")
         XCTAssertEqual(QuotaMetricPresentation(metric: metric(21.9876, .remaining), mode: .used).valueText, "已用 78%")
         for mode in QuotaDisplayMode.allCases {
-            XCTAssertEqual(QuotaMetricPresentation(metric: metric(21.9876, .remaining), mode: mode).detailText, "来源读数 剩余 21.9876%")
+            XCTAssertNil(QuotaMetricPresentation(metric: metric(21.9876, .remaining), mode: mode).detailText)
         }
     }
 
     func testZeroAndHundredEndpointsInBothDirections() throws {
         for direction: Stage3QuotaDirection in [.used, .remaining] {
             for raw in [0.0, 100] {
-                let source = metric(raw, direction)
+                let source = metric(Decimal(raw), direction)
                 for mode in QuotaDisplayMode.allCases {
                     let same = mode == .source || (mode == .used && direction == .used) || (mode == .remaining && direction == .remaining)
                     let value = same ? raw : 100 - raw
@@ -140,7 +140,7 @@ final class QuotaDisplayModeTests: XCTestCase {
 
     func testAvailabilityColorBoundariesStayBoundToSourceInEveryMode() throws {
         for (remaining, band): (Double, QuotaAvailabilityBand) in [(0, .low), (30, .low), (30.01, .medium), (60, .medium), (60.01, .high), (100, .high)] {
-            for source in [metric(remaining, .remaining), metric(100 - remaining, .used)] {
+            for source in [metric(Decimal(remaining), .remaining), metric(100 - Decimal(remaining), .used)] {
                 for mode in QuotaDisplayMode.allCases {
                     XCTAssertNotNil(QuotaMetricPresentation(metric: source, mode: mode).progressFraction)
                     XCTAssertEqual(QuotaAvailabilityBand.band(value: source.value, asOf: now, now: now, refreshIntervalSeconds: 300), band)
@@ -162,7 +162,7 @@ final class QuotaDisplayModeTests: XCTestCase {
     }
 
     func testInvalidPercentNeverClampsIntoAValidBar() {
-        for raw in [-1.0, 100.01, Double.nan, .infinity, -.infinity] {
+        for raw: Decimal in [-1, 100.01, .nan] {
             for mode in QuotaDisplayMode.allCases {
                 let source = metric(raw, .used, text: "已用 67%")
                 let presentation = QuotaMetricPresentation(metric: source, mode: mode)

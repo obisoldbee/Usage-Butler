@@ -96,7 +96,8 @@ public enum Stage3QuotaDirection: Equatable, Sendable {
 }
 
 public enum Stage3QuotaValue: Equatable, Sendable {
-    case percent(value: Double, direction: Stage3QuotaDirection)
+    /// Keep source precision through complement, display rounding and band decisions.
+    case percent(value: Decimal, direction: Stage3QuotaDirection)
     case unlimited
     case usedCount(used: Int, total: Int, unit: String)
     case entitlement(availableCount: Int)
@@ -104,8 +105,8 @@ public enum Stage3QuotaValue: Equatable, Sendable {
     case unavailable
 
     public var progressFraction: Double? {
-        guard case let .percent(value, _) = self, value.isFinite else { return nil }
-        return min(max(value / 100, 0), 1)
+        guard case let .percent(value, _) = self, !value.isNaN else { return nil }
+        return NSDecimalNumber(decimal: min(max(value / 100, 0), 1)).doubleValue
     }
 }
 

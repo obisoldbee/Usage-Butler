@@ -231,7 +231,7 @@ public actor QuotaAlertService {
         case .openAI: "OpenAI"
         case .miniMax: "MiniMax"
         case .ark: "火山方舟"
-        case .grokBot: "Grok Bot"
+        case .grokBot: "Grok"
         }
     }
 }

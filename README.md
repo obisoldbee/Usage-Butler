@@ -7,9 +7,9 @@ Usage-Butler 是一款 macOS 菜单栏应用，用于在一个界面中查看 AI
 1. OpenAI Codex
 2. MiniMax Token Plan
 3. 火山方舟 Agent Plan / Coding Plan
-4. Grok Bot，通过本机 Cursor 登录来源读取 Grok / Cursor 共享周额度
+4. Grok，通过本机 Cursor 登录来源读取 Grok / Cursor 共享周额度
 
-OpenAI CLI 返回的 Codex Spark 或其他额度桶，可作为 Codex 概览明细出现。Grok Bot 默认关闭，需在设置中明确授权读取 Cursor 登录来源。
+OpenAI CLI 返回的 Codex Spark 或其他额度桶，可作为 Codex 概览明细出现。Grok 默认关闭，需在设置中明确授权读取 Cursor 登录来源。
 
 本项目只读取和展示额度信息，不提供订阅购买、升级或额度重置能力。
 
@@ -104,7 +104,7 @@ OpenAI CLI 返回的 Codex Spark 或其他额度桶，可作为 Codex 概览明�
 
 各 CLI 由对应项目独立提供和授权，本仓库不包含这些 CLI，也不代替其登录流程。
 
-使用 Grok / Cursor 共享额度时，需要本机 Cursor 已有有效登录，并在额度管家设置中明确启用 Grok Bot。该来源直接通过 HTTPS 查询官方身份与用量接口。
+使用 Grok / Cursor 共享额度时，需要本机 Cursor 已有有效登录，并在额度管家设置中明确启用 Grok。该来源直接通过 HTTPS 查询官方身份与用量接口。
 
 ## 构建与验证
 
@@ -137,7 +137,7 @@ python3 -B script/tests/test_debug_launch_guard.py
 ## 隐私与本地数据
 
 - 应用和仓库不内置 Provider token、API key、Cookie 或用户登录资料。
-- OpenAI、MiniMax、火山方舟登录状态由本机 `codex`、`mmx`、`arkcli` 管理，CLI 可能连接对应 Provider 网络。Grok Bot 仅在明确启用后只读访问指定 Cursor 会话键，会话只在内存中使用；规范化额度缓存按会话关联加密保存。
+- OpenAI、MiniMax、火山方舟登录状态由本机 `codex`、`mmx`、`arkcli` 管理，CLI 可能连接对应 Provider 网络。Grok 仅在明确启用后只读访问指定 Cursor 会话键，会话只在内存中使用；规范化额度缓存按会话关联加密保存。
 - 规范化后的额度缓存写入 `~/Library/Application Support/Usage-Butler/quota-cache/v1/`。
 - 内存历史写入 `~/Library/Application Support/Usage-Butler/memory-history/v1/`。
 - 应用网络分钟历史保存在 `~/Library/Application Support/io.github.obisoldbee.UsageButler/NetworkHistory/history-v1.sqlite`；后台遵循当前用户的系统批准和停止意图。数据包含本地应用身份、已观察字节与覆盖状态，不保存网络载荷或连接目标。

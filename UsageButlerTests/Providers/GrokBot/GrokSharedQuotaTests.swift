@@ -52,10 +52,10 @@ import UsageButlerDomain
         XCTAssertEqual(data.products[0].metrics[0].window?.timeEvent?.occursAt, shared.resetsAt)
         XCTAssertNoThrow(try ProviderQuotaIdentityValidator.validate(data, expectedProviderID: .grokBot))
         let projection = project(data), metric = projection.products[0].metrics[0]
-        XCTAssertEqual(projection.products[0].title, "Grok / Cursor 共享周额度")
+        XCTAssertNil(projection.products[0].title)
         XCTAssertEqual(metric.displayValueText, "已用 55%")
         guard case let .percent(value, .used) = metric.value else { return XCTFail("Shared percentage must render") }
-        XCTAssertEqual(value, NSDecimalNumber(decimal: shared.usagePercent!).doubleValue)
+        XCTAssertEqual(value, shared.usagePercent)
         XCTAssertTrue(metric.detailText!.contains("本月积分已用 US$0"))
         XCTAssertTrue(metric.detailText!.contains("本月额外用量限额 未设置"))
         XCTAssertTrue(metric.detailText!.contains("额外积分余额未提供"))
