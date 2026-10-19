@@ -48,11 +48,11 @@ struct BackgroundHistorySettingsView: View {
                     Text("精确阈值：\(String(bytes)) 字节").font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("settings.history.largeBytes")
                 } else {
-                    Text("MiB 需对应完整字节，范围为1–1073741824 MiB。")
+                    Text("请输入 1–1,073,741,824 MiB，换算后须为整数个字节。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                         Text("零流量或没有可用读数会结束连续段；持续上传还会在读数低于速率阈值时结束。")
-                        Text("后台重启、系统时间跳变和UTC日期变化会分段。")
+                        Text("后台重启、系统时间校准及 UTC 跨日时会自动分段。")
                         Text("筛选只影响本地记录，不发送提醒或阻断连接。")
                     }.font(.caption).foregroundStyle(.secondary)
                 }
@@ -72,7 +72,7 @@ struct BackgroundHistorySettingsView: View {
                         }
                         if let issue = model.serviceIssue { Text(issue) }
                         Text("本地代码签名与当前用户边界；同用户可修改本地文件，不是防篡改审计记录。")
-                        Text("来源为系统 nettop，可能包含回环和代理腿；未采集目标、文件内容或前台状态。")
+                        Text("数据源为系统 nettop，可能包含本机回环与代理转发流量；未采集访问目标、数据内容或前台状态。")
                     }.font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }.padding(12)

@@ -147,7 +147,7 @@ private struct UsageButlerSettingsScene: Scene {
             }
 
             CommandGroup(replacing: .appTermination) {
-                Button("退出主程序（后台按设置继续）") {
+                Button("退出 额度管家") {
                     runtime.quit()
                 }
                 .keyboardShortcut("q", modifiers: .command)

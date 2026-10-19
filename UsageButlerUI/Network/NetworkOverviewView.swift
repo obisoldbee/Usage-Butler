@@ -45,7 +45,7 @@ struct NetworkOverviewView: View {
                 if !model.isFixtureMode {
                     Picker("网络视图", selection: $networkView) {
                         Text("应用活动").tag("applications")
-                        Text("接口趋势").tag("interfaces")
+                        Text("设备流量").tag("interfaces")
                     }.pickerStyle(.segmented).accessibilityIdentifier("network.view")
                 }
                 if !model.isFixtureMode {
@@ -144,7 +144,7 @@ struct NetworkTrendView: View {
                 .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                 .lineLimit(1).frame(height: 16, alignment: .leading)
                 .accessibilityIdentifier("network.inspection")
-            Text("两张图使用各自的刻度").font(.caption2).foregroundStyle(.secondary)
+            Text("上传与下载采用独立刻度").font(.caption2).foregroundStyle(.secondary)
         }
         .padding(12).background(.background, in: RoundedRectangle(cornerRadius: 12))
         .overlay { RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.55)).allowsHitTesting(false) }
@@ -154,7 +154,7 @@ struct NetworkTrendView: View {
     }
 
     private func inspectionText(samples: [NetworkRateSample]) -> String {
-        guard let inspectedAt = inspection.inspectedAt else { return String(localized: "指向曲线查看速率，点击可固定读数") }
+        guard let inspectedAt = inspection.inspectedAt else { return String(localized: "悬停查看速率，点击可固定读数") }
         let sample = frame.inspection.sample(at: inspectedAt)
         return "\(inspectedAt.formatted(date: .omitted, time: .standard)) · ↑ \(NetworkPresentation.rate(sample?.uploadBytesPerSecond)) · ↓ \(NetworkPresentation.rate(sample?.downloadBytesPerSecond))"
     }

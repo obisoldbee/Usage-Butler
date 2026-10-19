@@ -269,7 +269,7 @@ public enum LiveProviderProjectionMapper {
                     if case let .percent(percent) = metric.value, let number = boundedPercent(percent.sourceValue) {
                         value = .percent(value: number, direction: .used)
                     } else { value = .unavailable }
-                    return Stage3QuotaMetricProjection(id: stableMetricID(metric.id), title: "Sand 来源读数", value: value,
+                    return Stage3QuotaMetricProjection(id: stableMetricID(metric.id), title: "Cursor 来源读数", value: value,
                         event: metric.window?.timeEvent.map { event in
                             Stage3TimeEvent(kind: event.kind == .entitlementExpiry ? .entitlementExpiry : .reset,
                                 occursAt: event.occursAt, style: .absoluteDateTime)
@@ -299,7 +299,7 @@ public enum LiveProviderProjectionMapper {
         }
         let meter: String
         switch observation.meteringSystem {
-        case .unknown: meter = "Sand 来源读数，账户计量体系未确认。"
+        case .unknown: meter = "Cursor 来源读数，账户计量体系未确认。"
         case .xShared: meter = "共享周额度缺少已核实的数据来源。"
         case .legacyCursor: meter = "Cursor 旧计量体系。"
         }
@@ -311,7 +311,7 @@ public enum LiveProviderProjectionMapper {
         switch shared.weeklyValueState {
         case .available: return String(localized: "已用 \(shared.officialDisplayPercent!)%")
         case .notReported: return String(localized: "周用量未提供")
-        case .zeroBudget: return String(localized: "周预算为零")
+        case .zeroBudget: return String(localized: "周额度为零")
         case .invalid: return String(localized: "周用量数值无效")
         case .overBudget: return String(localized: "已超出周额度")
         case .unavailable:
@@ -336,7 +336,7 @@ public enum LiveProviderProjectionMapper {
         }
         var lines = [String(localized: "周已用 \(precise(shared.usagePercent))"), String(localized: "周剩余 \(precise(shared.remainingPercent))"),
             String(localized: "本月额外用量 \(money(shared.monthlyUsedCents))"), String(localized: "本月额外用量限额 \(limit)"),
-            String(localized: "本月积分已用 \(money(shared.monthlyCreditsUsedCents))"), String(localized: "额外积分余额未提供")]
+            String(localized: "本月积分已用 \(money(shared.monthlyCreditsUsedCents))"), String(localized: "暂无额外积分余额数据")]
         if shared.availability == .available, let reset = shared.monthlyResetsAt {
             let time = reset.formatted(.dateTime.locale(Locale(identifier: "zh_CN")).month().day().hour().minute())
             lines.append(String(localized: "月用量重置 \(time)"))
@@ -633,7 +633,7 @@ public enum LiveProviderProjectionMapper {
         case .session:
             return "当前会话"
         case .shortCycle:
-            return durationBadge(window.duration) ?? "短周期"
+            return durationBadge(window.duration) ?? "当前周期"
         case .weekly:
             return "每周"
         case .monthly:
@@ -644,7 +644,7 @@ public enum LiveProviderProjectionMapper {
     }
 
     private static func miniMaxMetricTitle(_ metric: QuotaMetric) -> String {
-        if isMiniMaxVideo(metric) { return "视频赠送" }
+        if isMiniMaxVideo(metric) { return "赠送视频额度" }
         if metric.sourceLabel == "general" {
             if metric.window?.kind == .weekly { return "每周" }
             return "当前周期"
@@ -683,7 +683,7 @@ public enum LiveProviderProjectionMapper {
         }
         switch kind {
         case .session, .shortCycle:
-            return "短周期"
+            return "当前周期"
         case .weekly:
             return "每周"
         case .monthly:
@@ -699,7 +699,7 @@ public enum LiveProviderProjectionMapper {
         case .session:
             return "当前会话"
         case .shortCycle:
-            return durationBadge(window.duration) ?? "短周期"
+            return durationBadge(window.duration) ?? "当前周期"
         case .weekly, .monthly, .providerDefined:
             return nil
         }

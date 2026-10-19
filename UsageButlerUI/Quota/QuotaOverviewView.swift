@@ -29,9 +29,9 @@ public struct QuotaOverviewView: View {
                     Image(systemName: "gauge.with.dots.needle.0percent")
                         .font(.largeTitle)
                         .foregroundStyle(.secondary)
-                    Text("没有启用额度来源")
+                    Text("未启用任何额度来源")
                         .font(.headline)
-                    Text("在设置中选择额度来源")
+                    Text("可前往设置开启需要监控的 AI 服务")
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 300)
@@ -248,11 +248,11 @@ private struct ProviderQuotaCard: View {
     }
 
     private var reauthorizationHelp: String {
-        if provider.activity == .loggingIn { return "取消本次官方授权流程" }
+        if provider.activity == .loggingIn { return "取消本次登录" }
         if let expiresAt = provider.authenticationExpiresAt {
-            return "授权到期：\(expiresAt.formatted(date: .abbreviated, time: .standard))。点击提前重新授权。"
+            return "授权到期：\(expiresAt.formatted(date: .abbreviated, time: .standard))。点击提前重新登录并刷新授权。"
         }
-        return "点击启动官方登录流程，提前重新授权并验证额度"
+        return "点击重新登录账号，刷新授权并验证额度"
     }
 
     private var hasBodyContent: Bool {
@@ -378,20 +378,20 @@ struct ProviderQuotaHeaderRecoveryPresentation: Equatable {
                     localized: "上次成功 \(lastSuccessAt.formatted(date: .abbreviated, time: .shortened))"
                 )
             } else if provider.products.isEmpty {
-                detail = String(localized: "尚无成功数据")
+                detail = String(localized: "尚未获取额度数据")
             } else {
                 detail = nil
             }
         } else if case let .stale(asOf) = provider.dataState {
             detail = String(
-                localized: "显示 \(asOf.formatted(date: .abbreviated, time: .shortened)) 的旧数据"
+                localized: "显示 \(asOf.formatted(date: .abbreviated, time: .shortened)) 缓存数据"
             )
         } else if let lastSuccessAt {
             detail = String(
                 localized: "上次成功 \(lastSuccessAt.formatted(date: .abbreviated, time: .shortened))"
             )
         } else if provider.products.isEmpty {
-            detail = String(localized: "尚无成功数据")
+            detail = String(localized: "尚未获取额度数据")
         } else {
             detail = nil
         }
@@ -527,7 +527,7 @@ private struct ProviderQuotaStateRow: View {
             if case .stale = provider.dataState {
                 return String(localized: "数据已过期")
             } else {
-                return String(localized: "还没有读到额度数据")
+                return String(localized: "尚未同步到额度数据")
             }
         case .requiresLogin:
             return String(localized: "需要登录")
@@ -555,28 +555,28 @@ private struct ProviderQuotaStateRow: View {
         }
         if let partial = provider.partialDataState {
             return String(
-                localized: "部分项目显示 \(partial.retainedStaleAsOf.formatted(date: .abbreviated, time: .shortened)) 的结果"
+                localized: "部分项目显示 \(partial.retainedStaleAsOf.formatted(date: .abbreviated, time: .shortened)) 缓存数据"
             )
         }
         if case let .stale(asOf) = provider.dataState {
             return String(
-                localized: "显示 \(asOf.formatted(date: .abbreviated, time: .shortened)) 的旧数据"
+                localized: "显示 \(asOf.formatted(date: .abbreviated, time: .shortened)) 缓存数据"
             )
         }
         switch provider.rowState {
         case .detecting, .requiresLogin:
-            return provider.products.isEmpty ? String(localized: "尚无成功数据") : nil
+            return provider.products.isEmpty ? String(localized: "尚未获取额度数据") : nil
         case let .expired(lastSuccessAt):
             guard let lastSuccessAt else {
-                return provider.products.isEmpty ? String(localized: "尚无成功数据") : nil
+                return provider.products.isEmpty ? String(localized: "尚未获取额度数据") : nil
             }
             return String(
-                localized: "显示 \(lastSuccessAt.formatted(date: .abbreviated, time: .shortened)) 的结果"
+                localized: "显示 \(lastSuccessAt.formatted(date: .abbreviated, time: .shortened)) 缓存数据"
             )
         case .connected, .authenticationWarning:
             return nil
         case .unavailable:
-            return provider.products.isEmpty ? String(localized: "尚无成功数据") : nil
+            return provider.products.isEmpty ? String(localized: "尚未获取额度数据") : nil
         }
     }
 }
@@ -758,7 +758,7 @@ private struct QuotaMetricRow: View {
 
             VStack(spacing: 0) {
                 if expandableItems.isEmpty {
-                    Text("服务只返回了可用次数，未提供每次的到期时间。")
+                    Text("当前服务未提供单次额度的具体到期时间。")
                         .font(.caption).foregroundStyle(.secondary).padding(12)
                 }
                 ForEach(Array(expandableItems.enumerated()), id: \.element.id) { index, item in
@@ -774,7 +774,7 @@ private struct QuotaMetricRow: View {
                             .font(.caption)
                             .lineLimit(1)
                         Spacer(minLength: 0)
-                        Text(item.expiresAt.map { "\(absoluteDateTimeText($0)) 到期" } ?? "到期时间未提供")
+                        Text(item.expiresAt.map { "\(absoluteDateTimeText($0)) 到期" } ?? "到期时间未知")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -832,7 +832,7 @@ private struct QuotaMetricRow: View {
     }
 
     private var eventText: String {
-        guard let event = metric.event else { return isEntitlement ? "到期未提供" : "—" }
+        guard let event = metric.event else { return isEntitlement ? "到期时间未知" : "—" }
         let suffix: String
         switch event.kind {
         case .reset: suffix = String(localized: "重置")

@@ -127,7 +127,7 @@ struct ProcessNetworkApplicationsView: View {
                       model.rows.contains(where: { $0.identity.key == app }) else { return false }
                 model.open(app); return true
             })
-            Text("关闭主程序后会清空关注名单；关注不发送提醒。")
+            Text("可筛选查看关注的应用；关注仅本次运行有效，不发送提醒。")
                 .font(.caption2).foregroundStyle(.secondary)
         }
     }

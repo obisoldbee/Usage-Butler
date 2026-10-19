@@ -153,7 +153,7 @@ struct NetworkHistoryView: View {
                     }
                 }.accessibilityIdentifier("network.history.diagnostics")
                 if !result.days.isEmpty {
-                    DisclosureGroup("每天汇总（UTC 日期）") {
+                    DisclosureGroup("每日汇总（按 UTC 统计）") {
                         ForEach(result.days) { day in
                             HStack {
                                 Text(Self.utcDay(day.day)); Spacer()
@@ -344,7 +344,7 @@ struct HistoryCurveView: View {
             } else {
                 Text("悬停查看，点击固定；方向键移动，Esc取消固定").font(.caption).foregroundStyle(.secondary)
             }
-            Text(drawsLine ? "两张图使用各自的刻度。缺少记录时断开；浅色线表示记录不完整。" : "两张图使用各自的刻度。彩色线表示零流量；留白表示没有记录；浅色柱表示记录不完整。")
+            Text(drawsLine ? "上传与下载采用独立刻度。缺少记录时断开；浅色线表示记录不完整。" : "上传与下载采用独立刻度。彩色线表示零流量；留白表示无记录；浅色柱表示记录不完整。")
                 .font(.caption).foregroundStyle(.secondary)
             Text("平均速率按有记录的时长计算；最高采样速率取单次记录的最大值。")
                 .font(.caption).foregroundStyle(.secondary)
@@ -424,7 +424,7 @@ struct HistoryCurveView: View {
                 .onExitCommand { reset() }
                 .accessibilityIdentifier(upload ? "network.history.chart.upload" : "network.history.chart.download")
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel(upload ? "历史上传已观察均速" : "历史下载已观察均速")
+                .accessibilityLabel(upload ? "历史上传平均速率" : "历史下载平均速率")
                 .accessibilityChildren {
                     ForEach(buckets) { point in
                         Rectangle().accessibilityElement()
@@ -434,9 +434,9 @@ struct HistoryCurveView: View {
                 }
                 .accessibilityChartDescriptor(HistoryChartAccessibility(buckets: buckets, upload: upload, range: range, upper: upper))
             HStack(alignment: .top) {
-                endpoint(range.start, prefix: "起", alignment: .leading)
+                endpoint(range.start, prefix: "开始", alignment: .leading)
                 Spacer(minLength: 12)
-                endpoint(range.end, prefix: "止", alignment: .trailing)
+                endpoint(range.end, prefix: "结束", alignment: .trailing)
             }.accessibilityIdentifier(upload ? "network.history.axis.upload" : "network.history.axis.download")
         }
     }
@@ -459,13 +459,13 @@ private struct HistoryChartAccessibility: AXChartDescriptorRepresentable {
         let x = AXNumericDataAxisDescriptor(title: "时间", range: range.start.timeIntervalSince1970...range.end.timeIntervalSince1970, gridlinePositions: []) {
             Date(timeIntervalSince1970: $0).formatted(date: .abbreviated, time: .shortened)
         }
-        let y = AXNumericDataAxisDescriptor(title: "观察均速，字节每秒", range: 0...upper, gridlinePositions: []) { NetworkPresentation.rate($0) }
+        let y = AXNumericDataAxisDescriptor(title: "平均速率，字节每秒", range: 0...upper, gridlinePositions: []) { NetworkPresentation.rate($0) }
         let points = buckets.compactMap { point -> AXDataPoint? in
             let micros = upload ? point.totals.uploadObservedMicroseconds : point.totals.downloadObservedMicroseconds
             guard let bytes = HistoryCurvePresentation.observedBytes(point.totals, upload: upload), micros > 0 else { return nil }
             return AXDataPoint(x: point.start.timeIntervalSince1970, y: Double(bytes) / (Double(micros) / 1e6))
         }
-        return AXChartDescriptor(title: upload ? "历史上传已观察均速" : "历史下载已观察均速", summary: "各时段分别显示，记录缺口留空。",
-            xAxis: x, yAxis: y, series: [AXDataSeriesDescriptor(name: "已观察时段", isContinuous: false, dataPoints: points)])
+        return AXChartDescriptor(title: upload ? "历史上传平均速率" : "历史下载平均速率", summary: "平均速率按有记录的时长计算；各时段分别显示，缺少记录时留空。",
+            xAxis: x, yAxis: y, series: [AXDataSeriesDescriptor(name: "有记录时段", isContinuous: false, dataPoints: points)])
     }
 }

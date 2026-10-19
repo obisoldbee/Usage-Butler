@@ -8,7 +8,7 @@ enum HistoryRecordingCopy {
         if quality.contains(.uploadGap) { lines.append("部分时段没有上传读数") }
         if quality.contains(.downloadGap) { lines.append("部分时段没有下载读数") }
         if quality.contains(.sourcePartial) { lines.append("部分采样未完整读取") }
-        if quality.contains(.sequenceGap) { lines.append("采样中间有缺口") }
+        if quality.contains(.sequenceGap) { lines.append("监控记录存在时间中断") }
         if quality.contains(.clockChanged) { lines.append("系统时间发生变化") }
         if quality.contains(.membersChanged) { lines.append("应用的进程发生变化") }
         if quality.contains(.counterReset) { lines.append("部分计数无法读取或已重新开始") }
@@ -24,8 +24,8 @@ enum HistoryRecordingCopy {
         case "below-threshold": "低于记录阈值"
         case "sampling-gap": "采样间隔中断"
         case "application-not-observed": "最近采样未发现此应用"
-        case "wall-clock-changed": "系统时间发生变化"
-        case "utc-day-boundary": "跨过UTC日期边界"
+        case "wall-clock-changed": "系统时钟发生跳变或校准"
+        case "utc-day-boundary": "进入新的一天（UTC 周期切换）"
         case "source-session-changed": "采集会话重新开始"
         case "rule-changed": "筛选阈值发生变化"
         case "collection-stopped": "采集已停止"

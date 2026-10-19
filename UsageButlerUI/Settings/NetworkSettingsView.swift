@@ -33,7 +33,7 @@ struct NetworkSettingsView: View {
                 }
             }
 
-            SettingsSection(title: String(localized: "统计哪个网络")) {
+            SettingsSection(title: String(localized: "网络选择")) {
                 VStack(alignment: .leading, spacing: 10) {
                     Picker("统计对象", selection: Binding(
                         get: { model.networkObservationSelection },
@@ -51,7 +51,7 @@ struct NetworkSettingsView: View {
                     }
                     .accessibilityIdentifier("settings.network.interfacePicker")
                     Text("自动跟随当前网络。")
-                    Text("手动选择只改变接口趋势，不影响应用统计，也不会切换网络连接。")
+                    Text("手动选择仅改变设备流量趋势视图，不影响应用统计，亦不会切换实际网络连接。")
                         .foregroundStyle(.secondary)
                     Divider()
                     if !model.networkObservationLabel.isEmpty {
@@ -67,8 +67,8 @@ struct NetworkSettingsView: View {
             SettingsSection(title: String(localized: "统计说明")) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("接口与应用分别统计，不能相加。应用流量包含本机通信和代理转发，可能重复计数。")
-                    Text("“本段累计”从最近一次有效读数开始；读数中断、重新计数或接口变化后会重新开始。")
-                    Text("接口趋势显示本次运行的最近2小时。应用最近1分钟显示逐次读数，更早记录按分钟汇总并持续保留。")
+                    Text("“本段累计”从最近一次有效读数开始；采样中断、计数重置或网卡变化后会重新起算。")
+                    Text("设备流量展示本次运行的最近 2 小时趋势。应用最近 1 分钟展示实时采样，更早记录按分钟汇总并持续保留。")
                     Text("仅记录流量，不阻断连接，也不记录连接目标或传输内容；可能漏掉运行时间很短的进程。")
                 }
                 .font(.callout).foregroundStyle(.secondary)

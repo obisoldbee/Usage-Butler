@@ -58,7 +58,7 @@ import UsageButlerDomain
         XCTAssertEqual(value, shared.usagePercent)
         XCTAssertTrue(metric.detailText!.contains("本月积分已用 US$0"))
         XCTAssertTrue(metric.detailText!.contains("本月额外用量限额 未设置"))
-        XCTAssertTrue(metric.detailText!.contains("额外积分余额未提供"))
+        XCTAssertTrue(metric.detailText!.contains("暂无额外积分余额数据"))
         XCTAssertFalse(metric.detailText!.contains("剩余重置"))
         XCTAssertNil(projection.sourceNotice)
     }

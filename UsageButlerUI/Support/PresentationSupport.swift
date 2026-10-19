@@ -144,10 +144,10 @@ public enum ProviderActivityPresentation {
         guard provider.activity.isInFlight else { return nil }
         if case let .stale(asOf) = provider.dataState {
             return String(
-                localized: "暂时显示 \(asOf.formatted(date: .abbreviated, time: .shortened)) 的结果"
+                localized: "暂时显示 \(asOf.formatted(date: .abbreviated, time: .shortened)) 缓存数据"
             )
         }
-        return provider.products.isEmpty ? String(localized: "尚无成功数据") : nil
+        return provider.products.isEmpty ? String(localized: "尚未获取额度数据") : nil
     }
 
     public static func usesProgressIndicator(
@@ -256,10 +256,10 @@ public enum MemoryFieldPresentation {
         case .physical: String(localized: "物理内存")
         case .used: String(localized: "已使用内存")
         case .cachedFiles: String(localized: "已缓存文件")
-        case .swapUsed: String(localized: "已使用的交换")
+        case .swapUsed: String(localized: "已用交换空间")
         case .appMemory: String(localized: "App 内存")
         case .wired: String(localized: "联动内存")
-        case .compressed: String(localized: "被压缩")
+        case .compressed: String(localized: "压缩内存")
         }
     }
 

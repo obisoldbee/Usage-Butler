@@ -187,7 +187,7 @@ final class QuotaDisplayModeTests: XCTestCase {
                 XCTAssertNil(result.progressFraction)
             }
         }
-        for text in ["周用量未提供", "周预算为零", "已超出周额度", "周额度暂不可用", "共享周额度不适用"] {
+        for text in ["周用量未提供", "周额度为零", "已超出周额度", "周额度暂不可用", "共享周额度不适用"] {
             let row = Stage3QuotaMetricProjection(id: "invalid", title: "每周", value: .unavailable, displayValueText: text)
             for mode in QuotaDisplayMode.allCases {
                 XCTAssertEqual(QuotaMetricPresentation(metric: row, mode: mode).valueText, text)

@@ -144,9 +144,9 @@ public enum NetworkStatusRules {
         }
         switch (restarted(total.upload, rate: \.uploadBytesPerSecond),
                 restarted(total.download, rate: \.downloadBytesPerSecond)) {
-        case (true, true): return String(localized: "此范围内上传、下载累计曾重新开始，可在网络设置查看原因")
-        case (true, false): return String(localized: "此范围内上传累计曾重新开始，可在网络设置查看原因")
-        case (false, true): return String(localized: "此范围内下载累计曾重新开始，可在网络设置查看原因")
+        case (true, true): return String(localized: "所选范围内上传与下载统计曾重新起算，可在网络设置查看详情")
+        case (true, false): return String(localized: "所选范围内上传统计曾重新起算，可在网络设置查看详情")
+        case (false, true): return String(localized: "所选范围内下载统计曾重新起算，可在网络设置查看详情")
         case (false, false): return nil
         }
     }
@@ -155,6 +155,6 @@ public enum NetworkStatusRules {
     /// is not the same product promise as blocking them, and a page that only
     /// shows traffic numbers invites the opposite reading.
     public static let monitoringOnlyNotice = String(
-        localized: "仅监控 / 防护未开启"
+        localized: "仅统计流量，无网络拦截功能"
     )
 }

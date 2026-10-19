@@ -246,7 +246,7 @@ public struct SettingsRootView: View {
             Label("已就绪", systemImage: "checkmark.circle.fill")
                 .foregroundStyle(.green)
         case .needsChatID:
-            Label("未配会话", systemImage: "exclamationmark.triangle.fill")
+            Label("未配置会话", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
         case .needsSetup:
             Label("需要配置", systemImage: "exclamationmark.triangle.fill")
@@ -275,7 +275,7 @@ public struct SettingsRootView: View {
                 : String(localized: "额度提醒已关闭")
         case .unavailable:
             return quotaAlertsEnabled
-                ? String(localized: "未能使用 lark-cli；请检查是否已安装 lark-cli 并加入 PATH")
+                ? String(localized: "暂时无法使用飞书命令行工具（lark-cli），请检查安装和登录配置")
                 : String(localized: "额度提醒已关闭")
         }
     }
@@ -286,7 +286,7 @@ public struct SettingsRootView: View {
                 .padding(12)
             VStack(alignment: .leading, spacing: 5) {
                 Text("打开设置  ⌘⇧,")
-                Text("刷新  ⌘R    退出主程序  ⌘Q")
+                Text("刷新  ⌘R    退出  ⌘Q")
                 Text("后台运行时也可打开设置。")
                     .font(.caption).foregroundStyle(.secondary)
                 if let issue = model.panelShortcutIssue { Text(ShortcutErrorCopy.displayText(issue)).help(issue).font(.caption).foregroundStyle(.orange) }
@@ -365,11 +365,11 @@ public struct SettingsRootView: View {
             Divider()
 
             HStack {
-                Button("退出额度管家主程序", action: onQuit)
+                Button("退出额度管家", action: onQuit)
                 Spacer()
             }
             .padding(12)
-            Text("退出主程序后，已开启的后台记录会继续。")
+            Text("退出后，已开启的后台记录会继续运行。")
                 .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 12)
         }
     }
@@ -606,7 +606,7 @@ private struct ProviderSettingsRow: View {
                 }
 
                 if provider.id == .grokBot {
-                    Text("允许后，只读 Cursor 的 User/globalStorage/state.vscdb 指定登录键，向 cursor.com 核对账户并查询 Grok / Cursor 共享周用量和月额外用量。会话仅在内存使用。关闭即撤销授权、取消请求并清除本次读数。请先在 Cursor 登录。")
+                    Text("开启后，只读本机 Cursor 的指定登录信息，向 cursor.com 核对账户并查询 Grok / Cursor 共享周额度及月额外用量。凭据仅在内存中使用。关闭将撤销授权、取消请求并清除本次读数。请先在 Cursor 登录。")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 if isEnabled && provider.id == .ark {
@@ -749,7 +749,7 @@ private struct ProviderSettingsRow: View {
 
     private var statusDetail: String? {
         if !isEnabled {
-            return provider.id == .grokBot ? "会话读取未授权，本次读数已清除" : String(localized: "不会退出登录或删除缓存")
+            return provider.id == .grokBot ? "未授权读取凭据，本次读数已清除" : String(localized: "不会退出登录或删除缓存")
         }
         if let activityDetail = ProviderActivityPresentation.detail(
             for: provider
@@ -758,17 +758,17 @@ private struct ProviderSettingsRow: View {
         }
         if let partial = provider.partialDataState {
             return String(
-                localized: "部分项目显示 \(partial.retainedStaleAsOf.formatted(date: .abbreviated, time: .shortened)) 的结果"
+                localized: "部分项目暂时显示 \(partial.retainedStaleAsOf.formatted(date: .abbreviated, time: .shortened)) 缓存数据"
             )
         }
         switch provider.dataState {
         case .unknown:
-            return provider.products.isEmpty ? String(localized: "尚无成功数据") : nil
+            return provider.products.isEmpty ? String(localized: "尚未获取额度数据") : nil
         case .fresh:
             return nil
         case let .stale(asOf):
             return String(
-                localized: "显示 \(asOf.formatted(date: .abbreviated, time: .shortened)) 的旧数据"
+                localized: "显示 \(asOf.formatted(date: .abbreviated, time: .shortened)) 的缓存数据"
             )
         }
     }
@@ -794,7 +794,7 @@ private struct ProviderSettingsRow: View {
                 } else {
                     Button("查看登录指引") {
                         reportAction(
-                            provider.id == .grokBot ? "请先在 Cursor 应用中登录，再返回额度管家刷新。此来源不可用时不会读取浏览器或 Keychain。" : String(localized: "请在 Codex CLI 中完成官方登录，然后返回额度管家刷新或重新检测")
+                            provider.id == .grokBot ? "请先在 Cursor 应用中登录，再返回额度管家刷新。此来源不可用时不会改用浏览器或 Keychain。关闭开关可随时撤销授权。" : String(localized: "请在 Codex CLI 中完成官方登录，然后返回额度管家刷新或重新检测")
                         )
                     }
                     .buttonStyle(.borderedProminent)
@@ -805,7 +805,7 @@ private struct ProviderSettingsRow: View {
                 } else {
                     Button("查看登录指引") {
                         reportAction(
-                            provider.id == .grokBot ? "请先在 Cursor 应用中重新登录，再返回额度管家刷新。关闭开关可撤销会话读取。" : String(localized: "请在 Codex CLI 中重新完成官方登录，然后返回额度管家刷新或重新检测")
+                            provider.id == .grokBot ? "请先在 Cursor 应用中重新登录，再返回额度管家刷新。关闭开关可随时撤销授权。" : String(localized: "请在 Codex CLI 中重新完成官方登录，然后返回额度管家刷新或重新检测")
                         )
                     }
                     .buttonStyle(.borderedProminent)

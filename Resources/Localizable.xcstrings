@@ -856,13 +856,13 @@
         }
       }
     },
-    "在设置中选择额度来源": {
+    "可前往设置开启需要监控的 AI 服务": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在设置中选择额度来源"
+            "value": "可前往设置开启需要监控的 AI 服务"
           }
         }
       }
@@ -952,13 +952,13 @@
         }
       }
     },
-    "尚无成功数据": {
+    "尚未获取额度数据": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "尚无成功数据"
+            "value": "尚未获取额度数据"
           }
         }
       }
@@ -985,13 +985,13 @@
         }
       }
     },
-    "已使用的交换": {
+    "已用交换空间": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已使用的交换"
+            "value": "已用交换空间"
           }
         }
       }
@@ -1540,13 +1540,13 @@
         }
       }
     },
-    "指向曲线查看速率，点击可固定读数": {
+    "悬停查看速率，点击可固定读数": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "指向曲线查看速率，点击可固定读数"
+            "value": "悬停查看速率，点击可固定读数"
           }
         }
       }
@@ -1711,24 +1711,13 @@
         }
       }
     },
-    "显示 %@ 的旧数据": {
+    "显示 %@ 缓存数据": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "显示 %@ 的旧数据"
-          }
-        }
-      }
-    },
-    "显示 %@ 的结果": {
-      "extractionState": "manual",
-      "localizations": {
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "显示 %@ 的结果"
+            "value": "显示 %@ 缓存数据"
           }
         }
       }
@@ -1798,13 +1787,13 @@
         }
       }
     },
-    "暂时显示 %@ 的结果": {
+    "暂时显示 %@ 缓存数据": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "暂时显示 %@ 的结果"
+            "value": "暂时显示 %@ 缓存数据"
           }
         }
       }
@@ -2197,13 +2186,13 @@
         }
       }
     },
-    "没有启用额度来源": {
+    "未启用任何额度来源": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "没有启用额度来源"
+            "value": "未启用任何额度来源"
           }
         }
       }
@@ -2359,13 +2348,13 @@
         }
       }
     },
-    "统计哪个网络": {
+    "网络选择": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "统计哪个网络"
+            "value": "网络选择"
           }
         }
       }
@@ -2544,13 +2533,13 @@
         }
       }
     },
-    "被压缩": {
+    "压缩内存": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "被压缩"
+            "value": "压缩内存"
           }
         }
       }
@@ -2902,13 +2891,13 @@
         }
       }
     },
-    "部分项目显示 %@ 的结果": {
+    "部分项目显示 %@ 缓存数据": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "部分项目显示 %@ 的结果"
+            "value": "部分项目显示 %@ 缓存数据"
           }
         }
       }
@@ -3220,13 +3209,13 @@
         }
       }
     },
-    "允许后，只读 Cursor 的 User/globalStorage/state.vscdb 指定登录键，向 cursor.com 核对账户并查询 Grok / Cursor 共享周用量和月额外用量。会话仅在内存使用。关闭即撤销授权、取消请求并清除本次读数。请先在 Cursor 登录。": {
+    "开启后，只读本机 Cursor 的指定登录信息，向 cursor.com 核对账户并查询 Grok / Cursor 共享周额度及月额外用量。凭据仅在内存中使用。关闭将撤销授权、取消请求并清除本次读数。请先在 Cursor 登录。": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "允许后，只读 Cursor 的 User/globalStorage/state.vscdb 指定登录键，向 cursor.com 核对账户并查询 Grok / Cursor 共享周用量和月额外用量。会话仅在内存使用。关闭即撤销授权、取消请求并清除本次读数。请先在 Cursor 登录。"
+            "value": "开启后，只读本机 Cursor 的指定登录信息，向 cursor.com 核对账户并查询 Grok / Cursor 共享周额度及月额外用量。凭据仅在内存中使用。关闭将撤销授权、取消请求并清除本次读数。请先在 Cursor 登录。"
           }
         }
       }
@@ -3253,13 +3242,13 @@
         }
       }
     },
-    "周预算为零": {
+    "周额度为零": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "周预算为零"
+            "value": "周额度为零"
           }
         }
       }
@@ -3385,13 +3374,13 @@
         }
       }
     },
-    "额外积分余额未提供": {
+    "暂无额外积分余额数据": {
       "extractionState": "manual",
       "localizations": {
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "额外积分余额未提供"
+            "value": "暂无额外积分余额数据"
           }
         }
       }
@@ -3469,6 +3458,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "月用量重置 %@"
+          }
+        }
+      }
+    },
+    "显示 %@ 的缓存数据": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示 %@ 的缓存数据"
+          }
+        }
+      }
+    },
+    "部分项目暂时显示 %@ 缓存数据": {
+      "extractionState": "manual",
+      "localizations": {
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分项目暂时显示 %@ 缓存数据"
           }
         }
       }

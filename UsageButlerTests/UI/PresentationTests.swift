@@ -11,7 +11,7 @@ final class PresentationTests: XCTestCase {
     func testActivityMonitorFieldTitlesMatchAcceptedCopy() {
         XCTAssertEqual(
             MemoryFieldID.allCases.map(MemoryFieldPresentation.title),
-            ["物理内存", "已使用内存", "已缓存文件", "已使用的交换", "App 内存", "联动内存", "被压缩"]
+            ["物理内存", "已使用内存", "已缓存文件", "已用交换空间", "App 内存", "联动内存", "压缩内存"]
         )
     }
 
@@ -121,7 +121,7 @@ final class PresentationTests: XCTestCase {
         )
         XCTAssertEqual(recovery.title, "登录已过期")
         XCTAssertEqual(recovery.actionTitle, "重新登录")
-        XCTAssertTrue(recovery.detail?.contains("旧数据") == true)
+        XCTAssertTrue(recovery.detail?.contains("缓存数据") == true)
     }
 
     func testQuotaHeaderRecoveryDoesNotOfferUnwiredLoginOrConsumeOtherStates() {
@@ -143,7 +143,7 @@ final class PresentationTests: XCTestCase {
         let recovery = ProviderQuotaHeaderRecoveryPresentation(
             provider: expiredWithoutLogin
         )
-        XCTAssertEqual(recovery?.detail, "尚无成功数据")
+        XCTAssertEqual(recovery?.detail, "尚未获取额度数据")
         XCTAssertNil(recovery?.actionTitle)
         XCTAssertNil(
             ProviderQuotaHeaderRecoveryPresentation(provider: requiresLogin)
@@ -180,9 +180,9 @@ final class PresentationTests: XCTestCase {
             ProviderQuotaHeaderRecoveryPresentation(provider: mixed)?.detail
         )
         XCTAssertTrue(freshDetail.contains("上次成功"))
-        XCTAssertFalse(freshDetail.contains("旧数据"))
+        XCTAssertFalse(freshDetail.contains("缓存数据"))
         XCTAssertTrue(mixedDetail.contains("上次成功"))
-        XCTAssertFalse(mixedDetail.contains("旧数据"))
+        XCTAssertFalse(mixedDetail.contains("缓存数据"))
     }
 
     func testExpiredHeaderOnlyConsumesDuplicateAuthenticationStatus() {
